@@ -316,37 +316,36 @@
           "suggestion": "该玩家槽数组只有 16 项（索引 0-15），传入 16 会越界。先在地图脚本中搜索 Player(16) 以及上限写成 16 的循环（含循环变量 <= 16 的写法），改为 0-15 并先确认玩家存在；若未找到且本机装有 War3API.dll 等第三方 JASS 插件，请先关闭插件单机复现以排除插件自身问题。"
         },
         "0x0010D793": {
-          "desc": "单位属性访问冲突。脚本尝试访问一个不存在或已移除单位的状态（如生命值、魔法值）。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "引擎 UI 帧属性读取崩溃（CFrame）。属性读取器 0x10D790 直接读取 [this+0x74]，而调用方先用句柄解析 0x37350 取对象、未判空就传入，ECX=0 导致访问 0x74。两份真实样本都落在已知的 0x99449 UI 帧渲染链上，调用栈均含 azurewrath.dll（80 平台）。",
+          "source": "static/2026-11-06",
+          "confidence": 0.6,
+          "verified": true,
+          "attribution": "本机环境或对战平台",
+          "suggestion": "属引擎 UI 帧生命周期问题，与具体地图脚本无直接对应。优先在单机模式复现；若只在对战平台出现，关闭平台插件或更换平台版本后重试。"
         },
         "0x00046394": {
-          "desc": "闪电效果 (Lightning) 崩溃。通常是在创建或更新闪电效果时，引用的源单位或目标单位已被移除。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "引擎投掷物（CMissileFrostSplash）子对象为空。函数 0x46390 读取 [ecx+0xC] 时 ECX=0，因为调用方把对象槽 [this+0x94] 原样当作子对象传入，而该槽为 NULL。样本栈含雪月编辑器插件 kkapi.dll 与 yd_jass_debug.dll，地图为 WorldEditTestMap.w3x。",
+          "source": "static/2026-11-06",
+          "confidence": 0.6,
+          "verified": true,
+          "attribution": "编辑器",
+          "suggestion": "该路径在编辑器测试环境（雪月插件 + JassDebug）出现，先关闭这些插件后重试；若单机对战不出现，则属编辑器运行时问题，与地图脚本无直接关系。"
         },
         "0x0018EE95": {
-          "desc": "多面板 (Multiboard) 刷新崩溃。尝试更新一个索引超出范围的面板项，或面板已被销毁。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "引擎哈希/有序容器插入崩溃。插入辅助函数 0x18EE20 中链接值为被污染的 0xFFFFFF68（指向对象前 0x98 字节），随后读取 [ecx+4] 越界。调用来自哈希表插入 0x18E8C0，与多面板刷新无关。",
+          "source": "static/2026-11-06",
+          "confidence": 0.55,
+          "verified": true,
+          "attribution": "暂无法确定",
+          "suggestion": "属引擎内部容器数据损坏，暂无法对应到具体地图脚本。若同一张地图反复出现，请把日志与同名 .dmp 一并交给地图作者排查；注意避免在遍历或回调中销毁仍被容器引用的对象。"
         },
         "0x0017407D": {
-          "desc": "计时器 (Timer) 回调崩溃。计时器到期时引用的数据对象已失效，或计时器在回调函数内部被非法销毁。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false,
-          "apis": [
-            "TimerStart",
-            "GetExpiredTimer",
-            "TimerGetElapsed",
-            "TimerGetRemaining",
-            "TimerGetTimeout",
-            "DestroyTimer",
-            "PauseTimer"
-          ]
+          "desc": "引擎对象析构时的容器解链崩溃。析构路径先调用 0x174020 清理容器、再调用虚析构；本次解链写入的链接值被污染为 Game.dll 代码段内地址（0x794CFA7F），向 .text 写入导致崩溃。与计时器回调无直接关系。",
+          "source": "static/2026-11-06",
+          "confidence": 0.55,
+          "verified": true,
+          "attribution": "暂无法确定",
+          "suggestion": "属引擎内部容器损坏，暂无法对应到具体地图脚本。若同一张地图反复出现，请把日志与同名 .dmp 一并交给地图作者排查；避免在回调或遍历过程中销毁对象。"
         },
         "0x00084510": {
           "desc": "魔兽内置 UI 刷新崩溃。常见于多面板 (Multiboard) 更新过快。",
@@ -459,30 +458,5 @@
       }
     }
   },
-  "disputed": {
-    "Game.dll": {
-      "1.27a": {
-        "0x00046394": [
-          {
-            "desc": "闪电效果 (Lightning) 崩溃。通常是在创建或更新闪电效果时，引用的源单位或目标单位已被移除。",
-            "source": "client/legacy"
-          },
-          {
-            "desc": "单位选择与 UI 渲染冲突。当一个被选中的单位或正在多面板显示的单位被 RemoveUnit 彻底移除时，UI 渲染逻辑访问已释放内存导致崩溃。",
-            "source": "server/legacy"
-          }
-        ],
-        "0x0017407D": [
-          {
-            "desc": "计时器 (Timer) 回调崩溃。计时器到期时引用的数据对象已失效，或计时器在回调函数内部被非法销毁。",
-            "source": "client/legacy"
-          },
-          {
-            "desc": "同步错误与本地玩家冲突。通常在 GetLocalPlayer() 块内执行了改变游戏状态的操作（如创建单位、修改变量），或调用了会导致状态更新的本地 UI/声音函数。",
-            "source": "server/legacy"
-          }
-        ]
-      }
-    }
-  }
+  "disputed": {}
 }

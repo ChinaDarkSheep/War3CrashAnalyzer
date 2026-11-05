@@ -143,6 +143,9 @@ def build_bundle(log_path, diagnosis, map_path=None):
                 "focus_category": environment.get("focus_category"),
                 "focus_label": environment.get("focus_label"),
                 "attribution_hint": environment.get("attribution_hint"),
+                "platform_in_stack": environment.get("platform_in_stack"),
+                "platform_modules": [item.get("module") for item in
+                                     (environment.get("platform_evidence") or [])],
                 "advice": environment.get("advice"),
                 "text": environment.get("text") or "",
             },

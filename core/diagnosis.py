@@ -4,7 +4,8 @@
 归属限定为：地图 / 本机环境或对战平台 / 编辑器 / 暂无法确定。
 """
 
-_ENV_CATEGORIES = ("platform", "editor_runtime", "debug_plugin", "gpu", "ime")
+_EDITOR_CATEGORIES = ("editor_shell", "editor_runtime", "editor_plugin")
+_ENV_CATEGORIES = ("platform", "debug_plugin", "gpu", "ime")
 
 _PLATFORM_NOTE = "若只在平台对局中崩溃，建议先单机复现以排除平台插件影响。"
 
@@ -52,6 +53,12 @@ def build_conclusion(plain=None, environment=None, matches=None, module_name="Un
             attribution = "编辑器"
         else:
             attribution = "本机环境或对战平台"
+    elif focus_category in _EDITOR_CATEGORIES:
+        attribution = "编辑器"
+        confidence = 0.65
+        target = f"{focus_label}（{module_name}+{rva}）" if rva else f"{focus_label}（{module_name}）"
+        summary = f"崩溃发生在 {target}，属于编辑器或编辑器插件的问题。"
+        suggestion = env_advice or "关闭编辑器插件或更换编辑器版本后重试；单机模式可正常运行时不必修改地图。"
     elif focus_category in _ENV_CATEGORIES:
         attribution = "本机环境或对战平台"
         confidence = 0.7 if focus_category in ("platform", "gpu") else 0.6
@@ -83,7 +90,13 @@ def build_conclusion(plain=None, environment=None, matches=None, module_name="Un
 
     if attribution == "地图" and findings.get("platform"):
         if "单机" not in suggestion:
-            suggestion += _PLATFORM_NOTE
+            stack_modules = [item["module"] for item in (env.get("platform_evidence") or [])
+                             if item.get("in_stack")]
+            if stack_modules:
+                suggestion += (f"崩溃调用栈包含平台模块 {'、'.join(stack_modules[:2])}；"
+                               "若只在平台对局中崩溃，建议先单机复现以排除平台插件影响。")
+            else:
+                suggestion += _PLATFORM_NOTE
 
     confidence = min(max(confidence, 0.05), 0.99)
     return {
@@ -100,6 +113,8 @@ def build_conclusion(plain=None, environment=None, matches=None, module_name="Un
             "rva": rva,
             "log_version": log_version,
             "addr": addr,
+            "platform_in_stack": bool(env.get("platform_in_stack")),
+            "platform_modules": [item["module"] for item in (env.get("platform_evidence") or [])],
         },
         "text": (f"【结论】{summary}\n"
                  f"【归属】{attribution}\n"
