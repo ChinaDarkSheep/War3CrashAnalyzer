@@ -541,6 +541,30 @@ class Auditor:
         r = self.analyze_log_content(log_content)
         return (r["addr"], r["relative_offset"], r["analysis_text"], r["map_name"], r["module_name"])
 
+    def analyze_log_file(self, log_path):
+        """诊断单个日志（自动收集用）：分析文本并记录历史与指纹。"""
+        content = read_log(log_path)
+        result = self.analyze_log_content(content)
+        name = os.path.basename(log_path)
+        stats = None
+        if self.history:
+            try:
+                mtime = os.path.getmtime(log_path)
+            except OSError:
+                mtime = time.time()
+            fingerprint = result.get("fingerprint")
+            conclusion = result.get("conclusion") or {}
+            if fingerprint:
+                stats = self.history.record_fingerprint(
+                    fingerprint, name, result.get("map_name"),
+                    attribution=conclusion.get("attribution"),
+                    confidence=conclusion.get("confidence"))
+            file_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            self.history.mark_diagnosed(
+                name, file_hash, mtime, result["analysis_text"])
+        result["fingerprint_stats"] = stats
+        return result
+
     def analyze_last_crash(self, war3_path):
         if not war3_path or not os.path.exists(war3_path):
             return "[-] 未找到魔兽目录，无法读取日志。"

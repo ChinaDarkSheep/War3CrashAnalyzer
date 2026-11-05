@@ -12,6 +12,7 @@ from pystray import MenuItem as item
 from PIL import Image, ImageTk
 from core.reporter import Reporter
 from core.fixer import Fixer
+from core.watcher import CrashLogWatcher
 from gui.tabs.static_tab import StaticTab
 from gui.tabs.local_tab import LocalTab
 from gui.tabs.leak_fix_tab import LeakFixTab
@@ -46,6 +47,7 @@ class War3SuperAnalyzerGUI:
         self.report_interval = 30
         self.boot_start = False
         self.min_to_tray = True
+        self.auto_collect = True
         self.status_var = tk.StringVar(value="就绪 | 模块化重构版")
         self.report_area = None # Will be set by StaticTab
         self.config = {}
@@ -77,6 +79,70 @@ class War3SuperAnalyzerGUI:
         threading.Thread(target=self.reporter.periodic_report_worker, 
                          args=(self.stop_reporting, self), 
                          daemon=True).start()
+
+        self.start_crash_watcher()
+
+    def start_crash_watcher(self):
+        self.stop_watcher = threading.Event()
+        self.crash_watcher = CrashLogWatcher(
+            get_war3_path=lambda: self.war3_path.get().strip('"'),
+            get_enabled=lambda: self.auto_collect,
+            on_new_log=self.handle_new_crash,
+            log=self._watch_log)
+        threading.Thread(target=self.crash_watcher.run,
+                         args=(self.stop_watcher,), daemon=True).start()
+
+    def _watch_log(self, message):
+        try:
+            self.root.after(0, self.log, message)
+        except Exception:
+            pass
+
+    def handle_new_crash(self, log_path):
+        try:
+            result = self.static_tab.auditor.analyze_log_file(log_path)
+        except Exception as e:
+            self._watch_log(f"[-] 自动诊断失败: {os.path.basename(log_path)}: {e}")
+            return
+        try:
+            self.root.after(0, lambda: self.show_new_crash(log_path, result))
+        except Exception:
+            pass
+
+    def show_new_crash(self, log_path, result):
+        conclusion = result.get("conclusion") or {}
+        attribution = conclusion.get("attribution") or "暂无法确定"
+        confidence = int(round((conclusion.get("confidence") or 0) * 100))
+        summary = conclusion.get("summary") or "未能定位具体原因"
+        map_name = result.get("map_name")
+        map_text = map_name if map_name and map_name != "Unknown" else "地图未知"
+
+        self.log("")
+        self.log(f"[自动收集] 检测到新崩溃: {os.path.basename(log_path)}")
+        if conclusion.get("text"):
+            for line in conclusion["text"].splitlines():
+                self.log("  " + line)
+        else:
+            self.log(f"  {summary}")
+        detail = result.get("detail_text")
+        if detail:
+            self.log(f"  补充依据：{detail}")
+
+        fingerprint = result.get("fingerprint")
+        stats = result.get("fingerprint_stats")
+        if fingerprint:
+            count = stats["samples"] if stats else 1
+            maps = stats["maps"] if stats else 0
+            map_part = f"涉及 {maps} 张地图" if maps else "地图未知"
+            self.log(f"  栈指纹 {fingerprint['signature']}"
+                     f"（{fingerprint['version']}）：累计 {count} 次，{map_part}")
+
+        self.update_status(f"自动诊断：{attribution} · 置信度 {confidence}%")
+        notice = f"{map_text} · {attribution} · {confidence}%\n{summary[:70]}"
+        try:
+            self.tray_icon.notify(notice, "检测到新的魔兽崩溃")
+        except Exception:
+            pass
 
     def startup_audit(self):
         if self.war3_path.get():
@@ -129,7 +195,8 @@ class War3SuperAnalyzerGUI:
             "allow_report": self.allow_report,
             "report_interval": self.report_interval,
             "boot_start": self.boot_start,
-            "min_to_tray": self.min_to_tray
+            "min_to_tray": self.min_to_tray,
+            "auto_collect": self.auto_collect
         }
         try:
             with open(os.path.join(self.exe_dir, CONFIG_FILE), 'w', encoding='utf-8') as f:
@@ -158,6 +225,7 @@ class War3SuperAnalyzerGUI:
         self.report_interval = config.get("report_interval", 30)
         self.boot_start = config.get("boot_start", False)
         self.min_to_tray = config.get("min_to_tray", True)
+        self.auto_collect = config.get("auto_collect", True)
         
         self.fixer = Fixer(self.log)
 
@@ -298,6 +366,8 @@ class War3SuperAnalyzerGUI:
 
     def quit_app(self, icon=None, item=None):
         self.stop_reporting.set()
+        if hasattr(self, 'stop_watcher'):
+            self.stop_watcher.set()
         if hasattr(self, 'tray_icon'):
             try:
                 self.tray_icon.stop()

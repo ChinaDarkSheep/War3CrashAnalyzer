@@ -73,7 +73,10 @@ class AdvTab(BaseTab):
         tk.Checkbutton(switch_box, text="关闭时最小化到托盘", variable=self.tray_var, command=self.on_tray_toggle, bg="#ffffff", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(0, 20))
 
         self.report_var = tk.BooleanVar(value=self.app.allow_report)
-        tk.Checkbutton(switch_box, text="开启自动上报 (支持我们)", variable=self.report_var, command=self.on_report_toggle, bg="#ffffff", font=("微软雅黑", 9)).pack(side=tk.LEFT)
+        tk.Checkbutton(switch_box, text="开启自动上报 (支持我们)", variable=self.report_var, command=self.on_report_toggle, bg="#ffffff", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(0, 20))
+
+        self.collect_var = tk.BooleanVar(value=self.app.auto_collect)
+        tk.Checkbutton(switch_box, text="自动收集新崩溃", variable=self.collect_var, command=self.on_collect_toggle, bg="#ffffff", font=("微软雅黑", 9)).pack(side=tk.LEFT)
         
         tk.Button(settings_frame, text="📖 查看手动上报指南", command=self.show_manual_guide, bg="#f5f6f7", fg="#2c3e50", font=("微软雅黑", 9)).pack(side=tk.RIGHT, pady=5)
 
@@ -174,6 +177,13 @@ class AdvTab(BaseTab):
         else:
             self.adv_log("[-] 自动上报功能已禁用。")
             self.update_status("自动上报功能已禁用")
+
+    def on_collect_toggle(self):
+        self.app.auto_collect = self.collect_var.get()
+        self.app.save_config()
+        status = "已开启" if self.app.auto_collect else "已关闭"
+        self.update_status(f"自动收集新崩溃{status}")
+        self.adv_log(f"[*] 自动收集新崩溃{status}")
 
     def show_manual_guide(self):
         guide_win = tk.Toplevel(self.app.root)
