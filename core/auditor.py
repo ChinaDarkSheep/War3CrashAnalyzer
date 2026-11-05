@@ -23,6 +23,7 @@ from core.logtext import detect_host, diagnose_plain, read_log
 from core.stack_parser import describe_stack, find_crash_frame, first_valid_frame, parse_stack_trace
 from core.environment import analyze_environment
 from core.diagnosis import build_conclusion
+from core.fingerprint import build_fingerprint
 from core.history import HistoryTracker
 from engine.memory import get_module_base
 from engine.dmp_parser import MinidumpParser
@@ -453,11 +454,13 @@ class Auditor:
                     "stack": frames,
                     "environment": environment,
                     "conclusion": conclusion,
+                    "fingerprint": None,
                 }
 
             # 4. 匹配知识库：版本 + 精确 RVA，不做任何后缀/跨版本模糊匹配
             build_match = re.search(r'War3Build:\s*([0-9.]+)', log_content, re.IGNORECASE)
-            log_version = normalize_version(build_match.group(1)) if build_match else None
+            build_raw = build_match.group(1) if build_match else None
+            log_version = normalize_version(build_raw) if build_raw else None
             rva = normalize_offset(relative_offset)
             lookup_text = ""
 
@@ -493,7 +496,14 @@ class Auditor:
             elif addr != "Unknown":
                 lookup_text = f"日志中的地址 {addr} 不是模块内偏移，无法查表，崩溃模块：{module_name}"
 
-            # 5. 统一结论：一句话结论 + 责任归属 + 建议 + 置信度
+            # 5. 栈指纹：版本 + 栈顶若干帧，用于跨地图聚合同一崩溃
+            fingerprint = build_fingerprint(
+                frames,
+                version=log_version or build_raw,
+                module_name=module_name if module_name != "Unknown" else None,
+                rva=rva)
+
+            # 6. 统一结论：一句话结论 + 责任归属 + 建议 + 置信度
             conclusion = build_conclusion(
                 plain=plain, environment=environment, matches=matches,
                 module_name=module_name, rva=rva, addr=addr,
@@ -524,6 +534,7 @@ class Auditor:
             "stack": frames,
             "environment": environment,
             "conclusion": conclusion,
+            "fingerprint": fingerprint,
         }
 
     def get_analysis_data(self, log_content):
@@ -566,9 +577,14 @@ class Auditor:
         reported_count = sum(1 for l in log_info if l["reported"])
         self.log(f"[+] 统计: {diagnosed_count} 份已诊断, {reported_count} 份已上报")
         
-        # 筛选未诊断的日志
+        # 筛选未诊断的日志；首次启用指纹时回溯全部日志，避免统计从 0 开始
         undiagnosed = [l for l in log_info if not l["diagnosed"]]
-        if not undiagnosed:
+        backfill = (bool(self.history) and diagnosed_count > 0
+                    and self.history.fingerprint_sample_count() == 0)
+        if backfill:
+            target_logs = sorted(log_info, key=lambda x: x["mtime"])
+            self.log(f"[*] 首次启用栈指纹，回溯诊断全部 {len(target_logs)} 份日志...")
+        elif not undiagnosed:
             # 如果全诊断过了，就选最新的一个重新分析一遍
             target_logs = [max(log_info, key=lambda x: x["mtime"])]
             self.log(f"[*] 所有日志已诊断，重新分析最近一份: {target_logs[0]['name']}")
@@ -579,6 +595,7 @@ class Auditor:
             self.log(f"[*] 准备批量诊断 {len(target_logs)} 份未处理日志...")
 
         total = len(target_logs)
+        fingerprint_stats = {}
         for idx, target_log in enumerate(target_logs):
             self.log(f"\n[*] [{idx+1}/{total}] 正在分析: {target_log['name']}")
             latest_log = target_log["path"]
@@ -587,9 +604,9 @@ class Auditor:
             
             analysis_summary = ""
             try:
-                # 1. 优先分析 .dmp 文件 (二进制分析)
+                # 1. 优先分析 .dmp 文件 (二进制分析)；回溯建指纹时只读文本，避免启动过慢
                 dmp_analysis_success = False
-                if os.path.exists(dmp_file):
+                if os.path.exists(dmp_file) and not backfill:
                     self.log(f"[*] 发现伴随 Dump 文件: {os.path.basename(dmp_file)}")
                     parser = MinidumpParser(dmp_file)
                     try:
@@ -678,7 +695,28 @@ class Auditor:
                     if not show_conclusion:
                         analysis_summary = (analysis_summary + "\n" + detail_text
                                             if analysis_summary else detail_text)
-                
+
+                # 栈指纹：同一版本 + 相同栈顶帧视为同一崩溃，按日志去重计数
+                fp = result.get("fingerprint")
+                if fp and self.history:
+                    stats = self.history.record_fingerprint(
+                        fp, target_log["name"], log_map_name,
+                        attribution=(conc or {}).get("attribution"),
+                        confidence=(conc or {}).get("confidence"))
+                    if stats:
+                        fingerprint_stats[stats["signature"]] = stats
+                        label = fp["version"] or "版本未知"
+                        map_part = (f"涉及 {stats['maps']} 张地图"
+                                    if stats["maps"] else "地图未知")
+                        if stats["new"]:
+                            self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
+                                     f"{fp['frame_count']} 帧）：累计第 "
+                                     f"{stats['samples']} 次，{map_part}")
+                        else:
+                            self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
+                                     f"{fp['frame_count']} 帧）：本日志已计入，累计 "
+                                     f"{stats['samples']} 次，{map_part}")
+
                 # 记录到历史库
                 if self.history:
                     file_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -687,6 +725,18 @@ class Auditor:
             except Exception as e:
                 self.log(f"[-] [{idx+1}/{total}] 分析失败: {e}")
         
+        if fingerprint_stats:
+            self.log(f"\n[+] 本次诊断涉及 {len(fingerprint_stats)} 个栈指纹。")
+            ranked = sorted(fingerprint_stats.values(),
+                            key=lambda s: (-s["samples"], s["signature"]))
+            repeated = [s for s in ranked if s["samples"] > 1]
+            if repeated:
+                self.log("[+] 重复崩溃聚类（累计出现多于 1 次）：")
+                for s in repeated[:5]:
+                    map_part = f"{s['maps']} 张地图" if s["maps"] else "地图未知"
+                    self.log(f"    {s['signature']}  {s.get('version') or '版本未知'}  "
+                             f"{s['samples']} 次 / {map_part}")
+
         return f"[+] 批量诊断完成，共处理 {total} 份日志。"
 
 

@@ -22,6 +22,7 @@ war3crashanalyzer/
 │   ├── stack_parser.py     # 调用栈解析与有效帧回退
 │   ├── environment.py      # 平台/插件/显卡驱动等运行环境识别
 │   ├── diagnosis.py        # 统一结论：结论/归属/建议/置信度
+│   ├── fingerprint.py      # 栈指纹：版本 + 栈顶 N 帧，用于崩溃聚类
 │   └── constants.py        # JASS 语法常量与正则表达式定义
 ├── engine/                 # 底层交互模块
 │   └── memory.py           # Windows API 封装、JASS VM 监控、句柄追踪
@@ -43,6 +44,7 @@ war3crashanalyzer/
 *   **强力提取**：利用常用字典从 MPQ/W3X 中提取核心脚本与配置文件。
 *   **资源审计**：扫描模型路径与贴图引用，并在已执行强力提取的情况下比对缺失文件。
 *   **崩溃日志分析**：读取 `Errors/*.txt` 与 `.dmp`。先解析日志明文原因（内存不足、文件损坏、打开/加载失败），编辑器崩溃不再套用 Storm.dll 偏移；再解析完整 `Stack Trace (Manual)`，崩溃指令地址无效（如空函数指针调用）时自动回退到栈内首个有效模块帧；同时从栈帧与 `Loaded Modules` 识别对战平台（`azurewrath.dll`、`kk*`）、YDWE 运行时（`yd_*`）、JassDebug 插件、显卡驱动与输入法；最终统一输出四行结论：**一句话结论 + 责任归属 + 建议 + 置信度**。游戏崩溃按 `War3Build` / dmp 模块版本锁定版本，用模块内 RVA 精确匹配 `knowledge.json`。
+*   **栈指纹聚类**：用「游戏版本 + 栈顶 5 个非系统帧」计算 12 位指纹，写入本地 `history.db`，并按日志去重统计同一崩溃的累计次数与涉及地图数；批量诊断结束时会列出重复崩溃排行，便于判断是普遍问题还是个别地图问题。
 
 ### 2. 内存监控 (Engine.Memory)
 *   **JassVMMonitor**：通过读取 `Game.dll` 内存，追踪 JASS 虚拟机的活跃线程、调用栈偏移量。

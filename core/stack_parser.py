@@ -33,11 +33,15 @@ def parse_stack_trace(log_content):
     if not header:
         return []
 
-    # 区块在 Exe/Program/File 等下一个字段或分隔线处结束
-    tail = log_content[header.start():]
+    # 区块从表头开始（表头上方常有一条分隔线，不能当成结束标记），
+    # 在 Exe/Program/File 等下一个字段处结束；其余非表行由行正则忽略。
+    tail = log_content[header.end():]
+    table = re.search(r"Address\s+Frame\s+Logical addr\s+Module",
+                      tail, re.I)
+    if table:
+        tail = tail[table.start():]
     end = re.search(
-        r"\r?\n\s*(?:Exe|Program|File|CommandLine|Object|Error Code|Bug Report)\s*:|"
-        r"\r?\n\s*-{10,}|\r?\n\s*={10,}",
+        r"\r?\n\s*(?:Exe|Program|File|CommandLine|Object|Error Code|Bug Report)\s*:",
         tail, re.I)
     block = tail[:end.start()] if end else tail
 
@@ -95,10 +99,11 @@ def describe_stack(frames, limit=5):
     for frame in frames:
         if _is_unknown(frame["module"]):
             continue
+        module = frame["module"].replace("/", "\\").rsplit("\\", 1)[-1]
         if frame["rva"] is not None:
-            parts.append(f"{frame['module']}+0x{frame['rva']:08X}")
+            parts.append(f"{module}+0x{frame['rva']:08X}")
         else:
-            parts.append(f"{frame['module']}（{frame['section']}:{frame['offset']}）")
+            parts.append(f"{module}（{frame['section']}:{frame['offset']}）")
         if len(parts) >= limit:
             break
     return " → ".join(parts)
