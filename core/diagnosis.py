@@ -59,11 +59,12 @@ def build_conclusion(plain=None, environment=None, matches=None, module_name="Un
         summary = f"崩溃发生在 {target}，更可能是本机运行环境或平台插件导致的。"
         suggestion = env_advice or "更新驱动、关闭插件后重试；若仅在平台对局中出现，请换单机模式复现。"
     elif matches:
-        attribution = "地图"
         best = _best_match(matches)
-        confidence = min(max(best[2].get("confidence") or 0.5, 0.3), 0.9)
-        summary = f"可能原因：{_clip(best[2].get('desc'))}"
-        suggestion = "将该诊断报告与日志、.dmp 一并发给地图作者，以便按模块和偏移定位。"
+        entry = best[2]
+        attribution = entry.get("attribution") or "地图"
+        confidence = min(max(entry.get("confidence") or 0.5, 0.3), 0.9)
+        summary = f"可能原因：{_clip(entry.get('desc'))}"
+        suggestion = entry.get("suggestion") or "将该诊断报告与日志、.dmp 一并发给地图作者，以便按模块和偏移定位。"
     elif rva:
         attribution = "地图"
         confidence = 0.3

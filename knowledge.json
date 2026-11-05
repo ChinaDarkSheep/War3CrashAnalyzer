@@ -296,10 +296,12 @@
           "verified": false
         },
         "0x000A08A7": {
-          "desc": "音频引擎/句柄溢出崩溃。检测到音频播放频率过高或音频句柄达到上限，建议检查 PlaySound/StopSound 逻辑。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "引擎 UI 帧/上下文注册崩溃（CFrame.cpp）。Game.dll 在注册帧上下文时拿到空对象，未判空就读取其 +0x8 字段，崩溃时 ESI=0；常见于地图初始化或清理阶段大量创建/销毁 UI 帧，或脚本在帧尚未就绪时重复注册。与音频句柄无关。",
+          "source": "static/2026-11-05",
+          "confidence": 0.8,
+          "verified": true,
+          "attribution": "暂无法确定",
+          "suggestion": "这是引擎内部 UI 帧管理路径，暂无法对应到具体地图脚本。可退出重开、关闭平台插件后单机复现；若同一张地图反复出现，再把日志与同名 .dmp 一并交给地图作者和平台排查。"
         },
         "0x002651E4": {
           "desc": "单位组枚举 (GroupEnum) 崩溃。通常是因为传入了已销毁的组句柄，或在枚举过程中删除了正在被枚举的单位。",
@@ -466,16 +468,6 @@
   "disputed": {
     "Game.dll": {
       "1.27a": {
-        "0x000A08A7": [
-          {
-            "desc": "音频引擎/句柄溢出崩溃。检测到音频播放频率过高或音频句柄达到上限，建议检查 PlaySound/StopSound 逻辑。",
-            "source": "client/legacy"
-          },
-          {
-            "desc": "音频引擎溢出/句柄异常。尝试播放 null 声音句柄或加载了采样率不合规（非 44.1kHz）的音频文件，导致音频缓冲区溢出。",
-            "source": "server/legacy"
-          }
-        ],
         "0x00046394": [
           {
             "desc": "闪电效果 (Lightning) 崩溃。通常是在创建或更新闪电效果时，引用的源单位或目标单位已被移除。",
