@@ -2,10 +2,11 @@
 
 
 a = Analysis(
-    ['War3SuperAnalyzer.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets'), ('plugins', 'plugins'), ('MPQEditor.exe', '.')],
+    datas=[('assets', 'assets'), ('plugins', 'plugins'), ('listfiles', 'listfiles'),
+           ('MPQEditor.exe', '.'), ('knowledge.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

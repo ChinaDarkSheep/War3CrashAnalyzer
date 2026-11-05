@@ -10,88 +10,51 @@ from datetime import datetime
 app = Flask(__name__, static_folder='static')
 DB_PATH = os.path.join(os.path.dirname(__file__), 'crash_data.db')
 
-# --- Crash Knowledge Base (Synced from core/knowledge.py) ---
-CRASH_KNOWLEDGE = {
-    "0x6F000000": {
-        "name": "Game.dll (1.24e)",
-        "offsets": {
-            "0x00456789": "单位路径搜索逻辑崩溃。通常是由于单位被困在无法移动的地形中。",
-            "0x00123456": "渲染引擎溢出。检查是否创建了过多的特效或浮动文字。",
-            "0x00789ABC": "同步错误导致的内存违例。检查触发器中是否滥用了 GetLocalPlayer。",
-            "0x0044E2C0": "GroupEnumUnitsInRange 崩溃。通常是因为传入了 null 组句柄。",
-            "0x00469220": "RemoveLocation 崩溃。通常是因为传入了 null 点句柄。",
-            "0x00050EF3": "英雄快捷键 (F9) 字符数组越界。通常是由于英雄数量过多或 UI 字符串处理异常。",
-            "0x00055F90": "模型动画与内存冲突。可能是因为在播放动画时该模型或动画已被删除。",
-            "0x0008873A": "单位变身 (Metamorphosis/Chaos) 逻辑崩溃。检查非英雄单位变身为英雄或反之的逻辑。",
-            "0x00093CE9": "光环层数限制崩溃。同一种光环效果叠加超过 2 层时可能触发。",
-            "0x00095B15": "英雄等级变更冲突。在特定触发事件中将英雄等级提升至 2 级以上可能导致崩溃。",
-            "0x000ED8A0": "GetExpiredTimer() 冲突。定时器到期函数中引用了非定时器对象或空句柄。",
-            "0x0012CF32": "商店购买崩溃。通常是由于非英雄单位（如山丘之王）尝试从特定商店购买物品。",
-            "0x00149F62": "镜头应用冲突。在玩家离开或地图切换时强制应用镜头设置导致的空引用。",
-            "0x002A0DA6": "烈焰风暴 ('Afrb') 崩溃。当该技能作用于没有任何物品栏位的单位时可能触发。",
-            "0x002E0E16": "I2* 系列转换函数崩溃。传入了非法参数（如 -1~-3 或 -9~-12）。",
-            "0x002F05C2": "路径寻路逻辑崩溃。两个单位之间完全没有可行路径时的死循环或空引用。",
-            "0x002F6337": "计时器恢复崩溃。尝试恢复一个未加载或未初始化的计时器对象。",
-            "0x0032755C": "I2* 转换函数严重溢出。参数小于等于 -13 或过大导致的内存越界。",
-            "0x00438E02": "治疗守卫 ('Ahwd') 崩溃。召唤单位 ID 为空或未正确定义。",
-            "0x0048D130": "魔法效果冲突。多个冲突的 Buff 同时作用于同一个单位。",
-            "0x004D3C39": "物品给予逻辑崩溃。尝试向一个不支持物品栏的单位给予物品。",
-            "0x005A5AF6": "战斗记录器 ('Battle Recorder') 删除崩溃。在该物品冷却期间尝试将其移除。",
-            "0x00685190": "单位坐标越界崩溃。单位移动到了地图边界之外的无效区域。",
-            "0x0068B61A": "动态特效删除冲突。在特效移动过程中尝试将其删除导致的同步问题。",
-            "0x006AFDE6": "数组索引越界。访问了索引为 -2 或过大的数组元素（-1 通常安全）。",
-            "0x006B36CE": "ExecuteFunction 崩溃。尝试执行一个不存在或名为 null 的字符串函数。",
-            "0x006B37BB": "GroupEnumUnitsInRange 回调签名错误。Condition 参数必须是 takes nothing returns boolean。"
-        }
-    },
-    "0x6F000002": {
-        "name": "Game.dll (1.26a)",
-        "offsets": {
-            "0x00083B24": "单位/组选择崩溃。通常发生在玩家或代码尝试选择一个正在被删除的单位时。",
-            "0x0017F814": "JASS 堆栈溢出。最常见的崩溃，通常由无限递归的触发器或死循环引起。",
-            "0x00556040": "字符串内存溢出。大量动态创建字符串且未及时释放。",
-            "0x006B6294": "排泄/句柄 (Handle) 问题。通常与计时器或已销毁单位的引用有关。",
-            "0x0000836F": "模型/纹理丢失。尝试加载一个不存在的 .mdx 或 .blp 文件。",
-            "0x0045B7D9": "音频引擎崩溃。通常与 3D 音效设置或损坏的音效文件有关。",
-            "0x004D8F46": "技能施法逻辑崩溃。可能由于触发器中对正在施法的单位执行了非法的即时操作（如立即删除）。",
-            "0x004780C1": "UI 刷新冲突。通常发生在自定义 FDF 界面在单位死亡/删除时未能正确同步。",
-            "0x00086CA030": "JASS 虚拟机异常。检测到死循环或函数调用递归深度超过 256 层。",
-            "0x6F4790C1": "对象访问冲突。尝试访问已销毁的单位或 Handle 对象的成员属性。"
-        }
-    },
-    "0x6F000001": {
-        "name": "Game.dll (1.27a)",
-        "offsets": {
-            "0x0050A568": "移除英雄属性崩溃。检测到脚本尝试对英雄执行 UnitRemoveAbility(..., 'AHer')，这会摧毁英雄数据结构导致 UI 访问冲突。",
-            "0x0050B568": "移除英雄属性崩溃。检测到脚本尝试对英雄执行 UnitRemoveAbility(..., 'AHer')，这会摧毁英雄数据结构导致 UI 访问冲突。",
-            "0x0017307D": "同步错误与本地玩家冲突。通常在 GetLocalPlayer() 块内执行了改变游戏状态的操作（如创建单位、修改变量），或调用了会导致状态更新的本地 UI/声音函数。",
-            "0x0009F8A7": "音频引擎溢出/句柄异常。尝试播放 null 声音句柄或加载了采样率不合规（非 44.1kHz）的音频文件，导致音频缓冲区溢出。",
-            "0x00045394": "单位选择与 UI 渲染冲突。当一个被选中的单位或正在多面板显示的单位被 RemoveUnit 彻底移除时，UI 渲染逻辑访问已释放内存导致崩溃。",
-            "0x0055AA11": "脚本引擎死循环。检查是否有未加等待的无限循环触发器。",
-            "0x0022BB33": "模型资源读取错误。某个模型文件损坏或不完整。",
-            "0x00084510": "魔兽内置 UI 刷新崩溃。常见于多面板 (Multiboard) 更新过快。",
-            "0x001E35E0": "GroupEnumUnitsInRange 崩溃。空句柄引用。",
-            "0x001FE500": "RemoveLocation 崩溃。空句柄引用。",
-            "0x03CEFC10": "渲染引擎冲突。通常由于非法模型路径或纹理资源损坏引起。",
-            "0x631A97CC": "音频驱动异常。建议检查 mss32.dll 或尝试关闭环境音效。"
-        }
-    },
-    "0x6F000003": {
-        "name": "Game.dll (1.28.5)",
-        "offsets": {
-            "0x001E852A": "同步错误 (Desync)。在联网游戏中，由于本地文件不同步导致的强制退出。",
-            "0x003B5A10": "UI 渲染崩溃。自定义 FDF 文件语法错误导致的界面崩溃。"
-        }
-    },
-    "0x6F000004": {
-        "name": "Game.dll (1.31.1)",
-        "offsets": {
-            "0x007823B2": "Lua 脚本语法错误。脚本逻辑严重错误会导致此崩溃。",
-            "0x000B3250": "模型解析错误。1.31 对 .mdx 格式要求更严，旧版损坏的模型会导致此地址报错。",
-            "0x005D67A4": "哈希表 (Hashtable) 溢出。存入过多的数据未清理。"
-        }
-    }
-}
+# --- 共享知识库：读取仓库根目录 knowledge.json，与客户端同源 ---
+def _locate_knowledge():
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [os.path.join(here, '..', 'knowledge.json'), os.path.join(here, 'knowledge.json')]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return candidates[0]
+
+def _load_kb():
+    try:
+        with open(_locate_knowledge(), 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[!] 知识库加载失败，将只使用日志中的本地分析结果: {e}")
+        return {"modules": {}, "build_prefixes": {}, "exceptions": {}}
+
+KB = _load_kb()
+BUILD_PREFIXES = KB.get("build_prefixes", {})
+
+def normalize_offset(value):
+    if value is None:
+        return None
+    s = str(value).strip().upper()
+    if s.startswith("0X"):
+        s = s[2:]
+    if not re.fullmatch(r"[0-9A-F]+", s) or len(s) > 8:
+        return None
+    return "0x" + s.zfill(8)
+
+def normalize_version(text):
+    if not text:
+        return None
+    letter = re.search(r"(1\.\d{2}[a-z])", str(text), re.IGNORECASE)
+    if letter:
+        return letter.group(1).lower()
+    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", str(text))
+    if not m:
+        return None
+    parts = [g for g in m.groups() if g is not None]
+    for size in (3, 2):
+        key = ".".join(parts[:size])
+        if key in BUILD_PREFIXES:
+            return BUILD_PREFIXES[key]
+    return None
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -146,7 +109,7 @@ def extract_crash_info(log_content):
         # Try to find Game.dll offset in stack trace
         stack_match = re.search(rf'{addr}\s+[0-9A-F]{{8}}\s+0001:([0-9A-F]{{8}})\s+.*Game\.dll', log_content, re.IGNORECASE)
         if stack_match:
-            relative_offset = "0x" + stack_match.group(1).upper()
+            relative_offset = normalize_offset(hex(int(stack_match.group(1), 16) + 0x1000))
         else:
             # Fallback for simple offsets
             clean_addr = addr.replace("0X", "")
@@ -186,16 +149,27 @@ def extract_map_name(log_content):
 
 def analyze_crash(log_content):
     addr, relative_offset = extract_crash_info(log_content)
-    
-    search_target = relative_offset if relative_offset else addr
-    
-    for ver, data in CRASH_KNOWLEDGE.items():
-        if search_target in data['offsets']:
-            return f"[{data['name']}] {data['offsets'][search_target]}"
-            
-    if relative_offset:
-        return f"未知 Game.dll 偏移量 ({relative_offset})"
-    return "无法定位崩溃原因，建议检查第三方插件"
+    rva = normalize_offset(relative_offset)
+    if not rva:
+        return "无法定位崩溃原因（日志中没有可用的模块内偏移）"
+
+    build = re.search(r'War3Build:\s*([0-9.]+)', log_content, re.IGNORECASE)
+    version = normalize_version(build.group(1)) if build else None
+
+    for mod, versions in KB.get("modules", {}).items():
+        if version:
+            entry = versions.get(version, {}).get(rva)
+            if entry:
+                return f"[{mod} {version}] {entry['desc']}"
+        else:
+            for ver, offsets in versions.items():
+                entry = offsets.get(rva)
+                if entry:
+                    return f"[{mod} {ver}（版本未确认）] {entry['desc']}"
+
+    if version:
+        return f"该版本（{version}）知识库未收录偏移 {rva}"
+    return f"未知偏移量 ({rva})"
 
 @app.route('/')
 def index():

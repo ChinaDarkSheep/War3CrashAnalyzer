@@ -30,11 +30,13 @@ class War3SuperAnalyzerGUI:
         self.war3_path = tk.StringVar()
         
         if getattr(sys, 'frozen', False):
-            self.base_dir = sys._MEIPASS
+            self.base_dir = sys._MEIPASS          # 只读资源目录
             self.exe_dir = os.path.dirname(sys.executable)
         else:
             self.base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             self.exe_dir = self.base_dir
+        # 可写数据目录：冻结后 _MEIPASS 退出即删，历史库/报告必须落在 exe 同级
+        self.data_dir = self.exe_dir
             
         self.mpq_editor_path = os.path.join(self.base_dir, "MPQEditor.exe")
         
@@ -49,7 +51,7 @@ class War3SuperAnalyzerGUI:
         self.config = {}
 
         # Initialize core components that depend on config
-        self.reporter = Reporter(self.log, self.base_dir)
+        self.reporter = Reporter(self.log, self.data_dir)
         self.load_config() # Load before UI setup to set variables
         
         if platform.system() == "Windows":
@@ -157,16 +159,7 @@ class War3SuperAnalyzerGUI:
         self.boot_start = config.get("boot_start", False)
         self.min_to_tray = config.get("min_to_tray", True)
         
-        # Re-initialize fixer with new key if it changed
-        self.fixer = Fixer(self.log, self.config.get("api_key"))
-        
-        # Update the API key entry in the advanced tab if it exists
-        if hasattr(self, 'adv_tab') and hasattr(self.adv_tab, 'api_key_entry'):
-            try:
-                self.adv_tab.api_key_entry.delete(0, tk.END)
-                self.adv_tab.api_key_entry.insert(0, self.config.get("api_key", ""))
-            except: 
-                pass
+        self.fixer = Fixer(self.log)
 
     def update_boot_start_registry(self):
         if platform.system() != "Windows": return
@@ -248,7 +241,8 @@ class War3SuperAnalyzerGUI:
 
 2. 自动上报崩溃日志：
    - 目的：收集大数据，优化通用崩溃库，帮助所有作者定位问题。
-   - 隐私：仅收集崩溃地址、系统版本和地图名，不采集个人文件。"""
+   - 隐私：会上传崩溃日志的文本内容（其中可能包含 Windows 用户名、计算机名和本地路径）、
+     系统版本与地图名。如不希望上传，可在「高级工具 & 设置」中关闭自动上报。"""
         content.insert(tk.END, info)
         content.config(state=tk.DISABLED)
 
@@ -319,12 +313,10 @@ class War3SuperAnalyzerGUI:
         os._exit(0)
 
     def on_closing(self):
-        msg = "您想如何处理程序？\n\n[是]：最小化到系统托盘 (继续自动上报)\n[否]：彻底退出程序 (停止所有功能)"
-        res = messagebox.askyesnocancel("退出确认", msg)
-        
-        if res is True: # Minimize to tray
+        if self.min_to_tray:
             self.root.withdraw()
             self.log("[*] 程序已最小化到系统托盘。")
-        elif res is False: # Quit
+            return
+
+        if messagebox.askyesno("退出确认", "确定要彻底退出程序吗？\n退出后将停止自动上报等后台功能。"):
             self.quit_app()
-        # if res is None (Cancel), do nothing

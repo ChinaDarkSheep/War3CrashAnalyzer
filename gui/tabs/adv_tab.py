@@ -1,6 +1,5 @@
-import os
-import subprocess
 import tkinter as tk
+import tkinter.scrolledtext
 from tkinter import messagebox
 from gui.tabs.base import BaseTab
 from core.plugin_manager import PluginManager
@@ -14,24 +13,21 @@ class AdvTab(BaseTab):
         # 警告区域
         warning_frame = tk.Frame(main_frame, bg="#fff3cd", pady=5, padx=10, highlightbackground="#ffeeba", highlightthickness=1)
         warning_frame.pack(fill=tk.X, pady=(0, 10))
-        tk.Label(warning_frame, text="⚠️ 警告：部分功能涉及进程注入，严禁在对战平台联网环境使用，以免触发封号风险。", 
+        tk.Label(warning_frame, text="⚠️ 警告：JassDebug 插件会挂接游戏进程，严禁在对战平台联网环境使用，以免触发封号风险。", 
                  bg="#fff3cd", fg="#856404", font=("微软雅黑", 9, "bold")).pack()
 
         # 使用网格布局的容器
         container = tk.Frame(main_frame, bg="#f5f6f7")
         container.pack(fill=tk.BOTH, expand=True)
 
-        def create_tool_card(parent, title, desc, btn_text, cmd, color, row, col, btn2_text=None, cmd2=None):
+        def create_tool_card(parent, title, desc, btn_text, cmd, color, row, col, colspan=1):
             card = tk.LabelFrame(parent, text=f" {title} ", bg="#ffffff", padx=15, pady=10, font=("微软雅黑", 9, "bold"), fg="#2c3e50")
-            card.grid(row=row, column=col, sticky=tk.NSEW, padx=5, pady=5)
+            card.grid(row=row, column=col, columnspan=colspan, sticky=tk.NSEW, padx=5, pady=5)
             
             tk.Label(card, text=desc, bg="#ffffff", font=("微软雅黑", 9), fg="#7f8c8d", wraplength=250, justify=tk.LEFT).pack(fill=tk.X, pady=(0, 10))
             
             btn_box = tk.Frame(card, bg="#ffffff")
             btn_box.pack(side=tk.BOTTOM, fill=tk.X)
-            
-            if btn2_text:
-                tk.Button(btn_box, text=btn2_text, command=cmd2, bg="#95a5a6", fg="white", font=("微软雅黑", 8), width=8).pack(side=tk.RIGHT, padx=2)
             
             tk.Button(btn_box, text=btn_text, command=cmd, bg=color, fg="white", font=("微软雅黑", 9, "bold"), height=1).pack(side=tk.RIGHT, padx=2, fill=tk.X, expand=True)
             return card
@@ -39,23 +35,13 @@ class AdvTab(BaseTab):
         container.columnconfigure(0, weight=1)
         container.columnconfigure(1, weight=1)
 
-        # 第一排：诊断与交互
-        create_tool_card(container, "🛡️ 同步失效审计", "深度分析脚本中的随机数发生器与 GetLocalPlayer 异步风险。", 
-                         "开始审计", self.start_desync_audit, "#e67e22", 0, 0)
-        
-        create_tool_card(container, "💻 实时交互终端", "连接魔兽进程，允许实时执行 Lua/JASS 代码（实测利器）。", 
-                         "启动终端", self.open_live_terminal, "#34495e", 0, 1)
+        # 第一排：崩溃排查引导
+        create_tool_card(container, "💉 崩溃恢复引导", "针对内存溢出、退出崩溃等常见类型的排查思路与预防建议。", 
+                         "查看引导", self.show_recovery_guide, "#16a085", 0, 0, colspan=2)
 
-        # 第二排：修复与恢复
-        create_tool_card(container, "💉 崩溃恢复引导", "通过 DLL Proxy 捕获详尽堆栈，尝试从非致命错误中恢复。", 
-                         "查看引导", self.show_recovery_guide, "#16a085", 1, 0)
-        
-        create_tool_card(container, "🚪 退出崩溃修复", "挂钩 UI 清理流程，解决退出地图时因回调残留导致的崩溃。", 
-                         "应用修复", self.apply_exit_fix, "#2980b9", 1, 1)
-
-        # 第三排：插件管理
+        # 第二排：插件管理
         jd_card = tk.LabelFrame(container, text=" 🐛 JassDebug 崩溃追踪插件 ", bg="#ffffff", padx=15, pady=10, font=("微软雅黑", 9, "bold"), fg="#2c3e50")
-        jd_card.grid(row=2, column=0, columnspan=2, sticky=tk.NSEW, padx=5, pady=5)
+        jd_card.grid(row=1, column=0, columnspan=2, sticky=tk.NSEW, padx=5, pady=5)
         
         tk.Label(jd_card, text="集成 ASI 插件，在崩溃发生时能够精准弹出具体的 JASS 报错行号，是地图开发者的必备调试工具。", 
                  bg="#ffffff", font=("微软雅黑", 9), fg="#7f8c8d").pack(side=tk.LEFT, padx=(0, 20))
@@ -65,9 +51,9 @@ class AdvTab(BaseTab):
         tk.Button(jd_btn_box, text="安装插件", command=self.install_jassdebug, bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"), width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(jd_btn_box, text="卸载", command=self.uninstall_jassdebug, bg="#95a5a6", fg="white", font=("微软雅黑", 9), width=8).pack(side=tk.LEFT, padx=5)
 
-        # 第四排：系统设置
+        # 第三排：系统设置
         settings_frame = tk.LabelFrame(container, text=" ⚙️ 系统与云端配置 ", bg="#ffffff", pady=10, padx=15, font=("微软雅黑", 9, "bold"), fg="#2c3e50")
-        settings_frame.grid(row=3, column=0, columnspan=2, sticky=tk.NSEW, padx=5, pady=5)
+        settings_frame.grid(row=2, column=0, columnspan=2, sticky=tk.NSEW, padx=5, pady=5)
         
         set_box = tk.Frame(settings_frame, bg="#ffffff")
         set_box.pack(fill=tk.X, pady=5)
@@ -98,8 +84,6 @@ class AdvTab(BaseTab):
         self.adv_log_area = tk.scrolledtext.ScrolledText(log_frame, font=("Consolas", 9), bg="#f8f9fa", fg="#2c3e50")
         self.adv_log_area.pack(fill=tk.BOTH, expand=True)
 
-        self.setup_api_key_ui(settings_frame)
-        
         # 重新绑定 plugin_manager 的日志输出
         self.plugin_manager.log = self.adv_log
 
@@ -107,58 +91,6 @@ class AdvTab(BaseTab):
         self.adv_log_area.insert(tk.END, message + "\n")
         self.adv_log_area.see(tk.END)
         self.update_status(message)
-
-    def setup_api_key_ui(self, parent):
-        api_frame = tk.LabelFrame(parent, text=" 🧠 AI 助手 API Key 配置 ", bg="#ffffff", pady=10, padx=15, font=("微软雅黑", 9, "bold"), fg="#2c3e50")
-        api_frame.pack(fill=tk.X, pady=5)
-        
-        tk.Label(api_frame, text="OpenAI API Key:", bg="#ffffff", font=("微软雅黑", 9)).pack(side=tk.LEFT)
-        self.api_key_entry = tk.Entry(api_frame, width=50, font=("Consolas", 9))
-        self.api_key_entry.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        self.api_key_entry.insert(0, self.app.config.get("api_key", ""))
-
-        tk.Button(api_frame, text="保存 Key", command=self.save_api_key, bg="#27ae60", fg="white", font=("微软雅黑", 8, "bold")).pack(side=tk.LEFT)
-
-    def save_api_key(self):
-        api_key = self.api_key_entry.get().strip()
-        if not api_key:
-            messagebox.showwarning("警告", "API Key 不能为空！")
-            return
-        self.app.config["api_key"] = api_key
-        self.app.save_config()
-        self.app.fixer = Fixer(self.app.log, api_key) # Re-initialize with new key
-        self.adv_log("[+] OpenAI API Key 已更新并保存。")
-        messagebox.showinfo("成功", "API Key 保存成功！AI 修复功能现已可用。")
-
-    def start_desync_audit(self):
-        self.adv_log("[*] 正在扫描脚本中的同步风险...")
-        self.update_status("正在检查 GetLocalPlayer 使用情况...")
-        
-        def step1():
-            self.adv_log("  > 正在分析随机数发生器 (GetRandomInt) 分布...")
-            self.update_status("正在分析随机数逻辑...")
-            self.app.root.after(1000, step2)
-            
-        def step2():
-            self.adv_log("  > 正在校验句柄分配一致性...")
-            self.update_status("正在校验句柄分配...")
-            self.app.root.after(1000, step3)
-            
-        def step3():
-            self.adv_log("[+] 同步审计完毕：未发现明显不同步风险。")
-            self.update_status("同步失效审计完毕")
-            
-        self.app.root.after(1000, step1)
-
-    def open_live_terminal(self):
-        self.adv_log("[*] 正在连接魔兽进程...")
-        self.update_status("正在建立 RPC 连接...")
-        
-        def finish():
-            self.adv_log("[+] 实时交互终端已就绪。")
-            self.update_status("实时交互终端已启动")
-            
-        self.app.root.after(1500, finish)
 
     def show_recovery_guide(self):
         self.adv_log("[*] 正在检索崩溃恢复方案库...")
@@ -174,41 +106,31 @@ class AdvTab(BaseTab):
         
         text = """🛠️ 魔兽崩溃恢复与预防引导
 
-当地图频繁发生崩溃时，请尝试以下恢复步骤：
+当地图频繁发生崩溃时，请尝试以下排查步骤：
 
-1. 启用 DLL Proxy 捕获堆栈：
-   - 工具会自动在魔兽目录安装调试代理，尝试截获致命错误并记录上下文。
-   - 检查 'War3CrashLog.txt' 获取详细寄存器快照。
+1. 先拿到可信的崩溃线索：
+   - 软件会自动监控魔兽崩溃日志与 .dmp 文件，解析崩溃地址并判断责任归属。
+   - 也可以在“静态审计”页面手动选择日志文件进行诊断。
 
-2. 处理内存溢出导致的崩溃：
-   - 降低地图内的特效密度。
-   - 检查是否有每秒执行多次的大规模单位组枚举。
+2. 处理内存泄露导致的崩溃：
+   - 在“泄露定位&修复”页面执行定位，查看未销毁的点、单位组、矩形区域。
+   - 降低地图内的特效密度，检查是否有每秒多次的大规模单位组枚举。
 
-3. 针对特定的退出崩溃：
-   - 点击本页面的“应用退出修复”按钮，挂钩 UI 回调清理流程。
+3. 针对退出地图时的崩溃：
+   - 这类崩溃多由定时器、触发器或回调在退出后仍然执行引起。
+   - 建议用泄露定位功能检查未清理的句柄，本工具不提供自动补丁。
 
-4. 软件辅助手段：
-   - 确保 JassDebug 插件已安装，崩溃时直接定位脚本行号。
-   - 使用“泄露定位&修复”功能处理脚本中未销毁的句柄。
+4. 定位到具体脚本行号：
+   - 安装 JassDebug 插件后，脚本报错时游戏会直接提示出错的函数与行号。
 
-5. 兼容性调整：
-   - 尝试在“设置”中开启“以兼容模式运行”。
-   - 检查模型文件是否包含非法顶点索引。
+5. 环境与版本：
+   - 不同游戏版本（1.24e / 1.27a / 1.28.5 等）的偏移不同，请确认日志中的版本与地图要求一致。
+   - 对战平台或第三方插件会改变调用栈，诊断结果中会标注可疑模块。
 
-如果问题依然存在，请将分析报告提交至官方支持社区。"""
+如果问题依然存在，请将诊断报告通过“上报崩溃”提交给地图作者。"""
         content.insert(tk.END, text)
         content.config(state=tk.DISABLED)
         self.update_status("崩溃恢复引导已加载")
-
-    def apply_exit_fix(self):
-        self.adv_log("[*] 正在分析地图退出序列...")
-        self.update_status("正在挂钩 UI 清理函数...")
-        
-        def finish():
-            self.adv_log("[+] 退出崩溃修复补丁已成功注入。")
-            self.update_status("退出崩溃修复已应用")
-            
-        self.app.root.after(2000, finish)
 
     def install_jassdebug(self):
         self.adv_log("[*] 正在安装 JassDebug 插件...")
@@ -280,10 +202,11 @@ class AdvTab(BaseTab):
 
 4. 高级工具页面：
    - JassDebug：点击“安装插件”后，游戏崩溃时会直接弹出报错的脚本行号。
-   - 实时终端：点击“启动终端”可在游戏运行时注入调试代码。
 
 5. 如何上报崩溃：
-   - 方式一（推荐）：在高级工具页开启“自动上报”，软件将自动收集并提交匿名诊断数据。
+   - 方式一（推荐）：在高级工具页开启“自动上报”，软件会随崩溃日志一起提交诊断结果。
+   - 上报内容包含崩溃日志原文（其中可能出现 Windows 用户名、计算机名和本地文件路径）、
+     地图名与崩溃地址分析结果。可在高级工具页随时关闭自动上报。
    - 方式二：在“静态审计”页面点击“上报崩溃”按钮进行手动提交。
 
 感谢您为魔兽生态稳定性做出的贡献！"""

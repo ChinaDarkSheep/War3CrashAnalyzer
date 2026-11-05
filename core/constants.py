@@ -38,6 +38,9 @@ ALL_LEAK_TYPES = {
     "force": ("DestroyForce", FORCE_FUNCS),
     "rect": ("RemoveRect", RECT_FUNCS)
 }
+
+# 这些创建函数返回的句柄通常会被长期持有，自动销毁会破坏地图逻辑
+NO_AUTO_DESTROY = {"CreateTrigger", "CreateTimer", "InitHashtable"}
 RECT_FUNCS = ["RectFromCenterSizeBJ", "Rect"]
 BOOLEXPR_FUNCS = ["Condition", "Filter"]
 MATCHING_FUNCS = {"GetUnitsOfPlayerMatching", "GetUnitsInRectMatching", "GetUnitsInRangeOfLocMatching"}

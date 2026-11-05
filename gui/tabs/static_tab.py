@@ -7,7 +7,7 @@ from core.auditor import Auditor
 
 class StaticTab(BaseTab):
     def setup_ui(self):
-        self.auditor = Auditor(self.log, self.update_status, self.app.base_dir)
+        self.auditor = Auditor(self.log, self.update_status, self.app.data_dir)
         
         pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
         pane.pack(fill=tk.BOTH, expand=True)
@@ -85,7 +85,7 @@ class StaticTab(BaseTab):
         self.deep_extract_btn.config(state=tk.DISABLED)
         self.update_status("正在进行强力提取...")
         threading.Thread(target=self.auditor.deep_extract_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.base_dir, lambda: self.deep_extract_btn.config(state=tk.NORMAL)), 
+                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.deep_extract_btn.config(state=tk.NORMAL)), 
                          daemon=True).start()
 
     def start_audit(self):
@@ -96,7 +96,7 @@ class StaticTab(BaseTab):
         self.audit_btn.config(state=tk.DISABLED)
         self.update_status("正在进行资源审计...")
         threading.Thread(target=self.auditor.audit_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.base_dir, lambda: self.audit_btn.config(state=tk.NORMAL)), 
+                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.audit_btn.config(state=tk.NORMAL)), 
                          daemon=True).start()
 
     def start_jass_audit(self):
@@ -107,7 +107,7 @@ class StaticTab(BaseTab):
         self.jass_audit_btn.config(state=tk.DISABLED)
         self.update_status("正在进行 JASS 审计...")
         threading.Thread(target=self.auditor.jass_audit_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.base_dir, lambda: self.jass_audit_btn.config(state=tk.NORMAL)), 
+                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.jass_audit_btn.config(state=tk.NORMAL)), 
                          daemon=True).start()
 
     def analyze_last_crash(self):

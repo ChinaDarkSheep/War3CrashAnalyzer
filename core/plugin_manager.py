@@ -1,6 +1,11 @@
 import os
 import shutil
 
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
 class PluginManager:
     def __init__(self, log_func, update_status_func):
         self.log = log_func
@@ -24,6 +29,16 @@ class PluginManager:
             dst_plugin = os.path.join(war3_path, "JassDebug.asi")
             shutil.copy2(src_plugin, dst_plugin)
             
+            if winreg is not None:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                        r"Software\Blizzard Entertainment\Warcraft III",
+                                        0, winreg.KEY_SET_VALUE) as key:
+                        winreg.SetValueEx(key, "AllowLocalFiles", 0, winreg.REG_DWORD, 1)
+                    self.log("[+] 注册表项 AllowLocalFiles 已设置为 1。")
+                except Exception as reg_e:
+                    self.log(f"[!] 无法修改注册表 AllowLocalFiles: {reg_e}")
+
             self.log(f"[+] 插件已安装至: {dst_plugin}")
             self.log("[提示] 请确保您的魔兽目录包含 ASI Loader (如 version.dll)。")
             self.log("[提示] 如果是 1.27+ 版本，建议将插件放在魔兽根目录。")

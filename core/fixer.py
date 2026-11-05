@@ -3,46 +3,15 @@ import shutil
 import subprocess
 import traceback
 import re
-import openai
-from core.constants import SET_RE, LEAK_CATEGORY, ALL_FUNCS_SORTED, COMMON_DICT, ALL_LEAK_TYPES
+from core.constants import (
+    SET_RE, LEAK_CATEGORY, ALL_FUNCS_SORTED, COMMON_DICT, ALL_LEAK_TYPES,
+    CALL_RE, BOOLEXPR_FUNCS, MATCHING_FUNCS, NO_AUTO_DESTROY
+)
 
 class Fixer:
-    def __init__(self, log_func, api_key=None):
+    def __init__(self, log_func):
         self.log = log_func
         self.leak_counter = 0
-        if api_key:
-            openai.api_key = api_key
-
-    def _get_ai_suggestion(self, code_snippet):
-        """Calls OpenAI API to get suggestions for fixing leaks."""
-        if not openai.api_key:
-            return None
-
-        try:
-            self.log("[*] Calling AI Assistant for code analysis...")
-            prompt = (
-                f"Please analyze the following JASS code snippet from a Warcraft 3 map \n"
-                f"and identify potential memory leaks (locations, groups, etc.).\n"
-                f"For each leak, provide the corrected code that includes the necessary \n"
-                f"cleanup calls (e.g., `call RemoveLocation(variable)`)."
-                f"Return only the corrected JASS code block, without any extra explanation.\n\n"
-                f"Code:\n```jass\n{code_snippet}\n```"
-            )
-
-            response = openai.Completion.create(
-                engine="text-davinci-003",
-                prompt=prompt,
-                max_tokens=1024,
-                temperature=0.0,  # Be deterministic
-                stop=["```"]
-            )
-
-            suggestion = response.choices[0].text.strip()
-            self.log("[+] AI Assistant responded.")
-            return suggestion
-        except Exception as e:
-            self.log(f"[-] AI Assistant API call failed: {e}")
-            return None
 
     def _build_dynamic_jass_listfile(self, map_file, temp_dir):
         """扫描地图二进制文件并结合本地字典，构建用于提取脚本的 Listfile。"""
@@ -246,13 +215,14 @@ class Fixer:
         for start, end, fname in func_bounds:
             func_lines = lines[start:end+1]
             func_text = '\n'.join(func_lines)
+            body = func_lines[1:-1]
             
             # 1. 扫描局部变量泄露 (未销毁的 Local 变量)
             idx = 0
-            while idx < len(func_lines) and re.match(r'^\s*local\s', func_lines[idx]):
+            while idx < len(body) and re.match(r'^\s*local\s', body[idx]):
                 idx += 1
             
-            locals_part = func_lines[:idx]
+            locals_part = body[:idx]
             for i, line in enumerate(locals_part):
                 m = re.match(r'^\s*local\s+(\w+)\s+(\w+)', line)
                 if m:
@@ -261,15 +231,13 @@ class Fixer:
                     if vtype not in ALL_LEAK_TYPES: continue
                     
                     # 检查是否禁用了该类型的定位
-                    if vtype == "location" and not options.get("fix_point", True): continue
-                    if vtype == "group" and not options.get("fix_group", True): continue
-                    if vtype == "rect" and not options.get("fix_rect", True): continue
+                    if not self._category_enabled(vtype, options): continue
 
                     destroyer, _ = ALL_LEAK_TYPES[vtype]
                     
                     if destroyer and f"{destroyer}({vname})" not in func_text:
                         leaks.append({
-                            "line": start + i + 1,
+                            "line": start + i + 2,
                             "function": fname,
                             "variable": vname,
                             "type": vtype,
@@ -279,13 +247,15 @@ class Fixer:
 
             # 2. 扫描内联匿名泄露 (例如 call Func(GetUnitLoc(u)))
             # 思路借鉴自“排泄处理”项目：寻找作为参数传递但未赋值给变量的创建函数调用
-            for i, line in enumerate(func_lines):
+            for i, line in enumerate(body):
                 # 排除注释行
                 if line.strip().startswith("//"): continue
                 
                 # 匹配所有已知的创建函数
                 for vtype, (destroyer, creators) in ALL_LEAK_TYPES.items():
+                    if not self._category_enabled(vtype, options): continue
                     for creator in creators:
+                        if creator in NO_AUTO_DESTROY: continue
                         # 寻找 creator(...) 形式的匹配
                         pattern = re.compile(re.escape(creator) + r'\s*\(', re.I)
                         for match in pattern.finditer(line):
@@ -306,7 +276,7 @@ class Fixer:
                                 
                             if is_inline:
                                 leaks.append({
-                                    "line": start + i + 1,
+                                    "line": start + i + 2,
                                     "function": fname,
                                     "variable": "Anonymous (内联匿名)",
                                     "type": vtype,
@@ -352,10 +322,9 @@ class Fixer:
             
             # 启发式检测：使用 constants.py 中的 LEAK_CATEGORY
             for creator_func, (ltype, destroyer) in LEAK_CATEGORY.items():
+                if creator_func in NO_AUTO_DESTROY: continue
                 # 检查选项开关
-                if ltype == "location" and not options.get("fix_point", True): continue
-                if ltype == "group" and not options.get("fix_group", True): continue
-                if ltype == "rect" and not options.get("fix_rect", True): continue
+                if not self._category_enabled(ltype, options): continue
                 
                 # 如果函数里用了创建函数，但没用销毁函数
                 if f"{creator_func}(" in func_code and destroyer not in func_code:
@@ -425,6 +394,13 @@ class Fixer:
                     var_funcs[m.group(2)].add(fname)
         return {v for v, funcs in var_funcs.items() if len(funcs) > 1}
 
+    @staticmethod
+    def _category_enabled(kind, options):
+        if kind == "location": return options.get("fix_point", True)
+        if kind == "group": return options.get("fix_group", True)
+        if kind == "rect": return options.get("fix_rect", True)
+        return True
+
     def transform_function_block(self, func_text, func_name, shared_vars, options):
         lines = func_text.split('\n')
         if len(lines) < 2: return func_text
@@ -437,7 +413,7 @@ class Fixer:
         
         locals_part = body[:idx]
         actual_body = body[idx:]
-        
+
         local_vars = []
         for line in locals_part:
             m = re.match(r'^\s*local\s+(location|group|rect|unit)\s+(\w+)', line)
@@ -446,9 +422,7 @@ class Fixer:
 
         cleanup_code = []
         for vtype, vname in local_vars:
-            if vtype == "location" and not options.get("fix_point", True): continue
-            if vtype == "group" and not options.get("fix_group", True): continue
-            if vtype == "rect" and not options.get("fix_rect", True): continue
+            if not self._category_enabled(vtype, options): continue
             
             destroy_func = {
                 "location": "RemoveLocation",
@@ -461,9 +435,56 @@ class Fixer:
                 cleanup_code.append(f"    set {vname} = null")
                 self.leak_counter += 1
 
+        # 跟踪 `set var = Creator(...)` 的变量，在使用结束后销毁
+        depths = self._nesting_depths(actual_body)
+        destroy_after = {}
+        assigned_creators = {}
+        for i, line in enumerate(actual_body):
+            m = SET_RE.match(line)
+            if not m or m.group(2).startswith('gg_'):
+                continue
+            var, rhs = m.group(2), m.group(4).rstrip()
+            cm = CALL_RE.match(rhs)
+            if not cm or cm.start() != 0 or self._find_matching_paren(rhs, cm.end() - 1) != len(rhs) - 1:
+                continue
+            creator = cm.group(1)
+            kind, destroyfn = LEAK_CATEGORY[creator]
+            if creator in NO_AUTO_DESTROY or not self._category_enabled(kind, options):
+                continue
+            assigned_creators[i] = (var, creator, rhs)
+            if var in shared_vars:
+                continue
+            last_use = -1
+            already_cleaned = False
+            clean_re = re.compile(rf'\b{destroyfn}\s*\(\s*{re.escape(var)}\s*\)')
+            j = i + 1
+            while j < len(actual_body):
+                if re.match(rf'^\s*set\s+{re.escape(var)}\s*=', actual_body[j]): break
+                if clean_re.search(actual_body[j]): already_cleaned = True; break
+                if re.search(rf'\b{re.escape(var)}\b', actual_body[j]): last_use = j
+                j += 1
+            if not already_cleaned and last_use != -1 and depths[last_use] == depths[i]:
+                destroy_after.setdefault(last_use, []).append((destroyfn, var))
+
+        new_locals, out = [], []
+        for i, line in enumerate(actual_body):
+            if i in assigned_creators:
+                var, creator, call = assigned_creators[i]
+                newline, pre, post = self.hoist_all_calls(call, new_locals, options, True)
+                out.extend(pre)
+                out.append(line.replace(call, newline, 1) if newline != call else line)
+                out.extend(post)
+            else:
+                newline, pre, post = self.hoist_all_calls(line, new_locals, options)
+                out.extend(pre); out.append(newline); out.extend(post)
+            if i in destroy_after:
+                for dfn, v in destroy_after[i]:
+                    out.append(f"    call {dfn}({v})")
+                    self.leak_counter += 1
+
         final_body = []
         inserted = False
-        for line in actual_body:
+        for line in out:
             if "return" in line and not inserted:
                 final_body.extend(cleanup_code)
                 inserted = True
@@ -472,4 +493,65 @@ class Fixer:
         if not inserted:
             final_body.extend(cleanup_code)
 
-        return '\n'.join([header] + locals_part + final_body + [trailer])
+        return '\n'.join([header] + locals_part + new_locals + final_body + [trailer])
+
+    def _nesting_depths(self, lines):
+        depth = [0] * len(lines)
+        d = 0
+        for i, line in enumerate(lines):
+            if re.match(r'^\s*(endif|endloop)\s*$', line): d -= 1
+            depth[i] = d
+            if re.match(r'^\s*if\s.*\bthen\s*$', line) or re.match(r'^\s*loop\s*$', line): d += 1
+        return depth
+
+    def _find_matching_paren(self, s, open_idx):
+        depth, in_str = 0, False
+        for i in range(open_idx, len(s)):
+            if in_str:
+                if s[i] == '\\': i += 1
+                elif s[i] == '"': in_str = False
+            else:
+                if s[i] == '"': in_str = True
+                elif s[i] == '(': depth += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0: return i
+        return -1
+
+    def hoist_all_calls(self, line, new_locals, options, nested_only=False):
+        """把内联的句柄创建调用提升为局部变量，并在语句后销毁。"""
+        newline, pre, post = line, [], []
+        indent = re.match(r'^(\s*)', line).group(1)
+        while True:
+            spans = []
+            for m in CALL_RE.finditer(newline):
+                close = self._find_matching_paren(newline, m.end() - 1)
+                if close != -1: spans.append((m.start(), close, m.group(1)))
+            if not spans: break
+            leaf = None
+            for s, e, name in spans:
+                if name in NO_AUTO_DESTROY: continue
+                kind, dfn = LEAK_CATEGORY[name]
+                if not self._category_enabled(kind, options): continue
+                if nested_only and s == 0 and e == len(newline) - 1: continue
+                if any(s < s2 and e2 < e for s2, e2, n2 in spans if (s, e) != (s2, e2)): continue
+                parent = None
+                for s2, e2, n2 in spans:
+                    if s2 <= s and e <= e2 and (s, e) != (s2, e2):
+                        if parent is None or (e2 - s2) < (parent[1] - parent[0]): parent = (s2, e2, n2)
+                # 外层已经是销毁函数时不再提升，避免重复销毁
+                if parent is not None and parent[2] == dfn: continue
+                if re.search(rf'\b{re.escape(dfn)}\s*\(\s*$', newline[:s]): continue
+                if name in BOOLEXPR_FUNCS:
+                    if parent is None or parent[2] not in MATCHING_FUNCS: continue
+                leaf = (s, e, name); break
+            if not leaf: break
+            s, e, name = leaf
+            kind, dfn = LEAK_CATEGORY[name]
+            v = f"leakfix_{kind[:3]}_{self.leak_counter + 1}"
+            self.leak_counter += 1
+            new_locals.append(f"    local {kind} {v}")
+            pre.append(f"{indent}set {v} = {newline[s:e + 1]}")
+            post.append(f"{indent}call {dfn}({v})")
+            newline = newline[:s] + v + newline[e + 1:]
+        return newline, pre, post

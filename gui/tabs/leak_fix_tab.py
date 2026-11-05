@@ -12,11 +12,11 @@ class LeakFixTab(BaseTab):
     def setup_ui(self):
         # 使用 app 中统一的 fixer 实例，如果没有则创建一个
         if not hasattr(self.app, 'fixer') or self.app.fixer is None:
-            self.app.fixer = Fixer(self.log, self.app.config.get("api_key"))
+            self.app.fixer = Fixer(self.log)
         self.fixer = self.app.fixer
         
         # 引入审计器用于代码切片
-        self.auditor = Auditor(self.leak_fix_log, self.update_status, self.app.base_dir)
+        self.auditor = Auditor(self.leak_fix_log, self.update_status, self.app.data_dir)
         
         main_frame = tk.Frame(self, bg="#f5f6f7", padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -47,11 +47,6 @@ class LeakFixTab(BaseTab):
                                 activebackground="#ffffff", selectcolor="#ffffff")
             chk.pack(anchor=tk.W)
 
-        self.use_ai_fix = tk.BooleanVar(value=False)
-        ai_check = tk.Checkbutton(card, text="✨ 启用 AI 智能修复 (直接修改 war3map.j)", variable=self.use_ai_fix, bg="#ffffff", font=("微软雅黑", 10, "bold"), fg="#e67e22",
-                                 activebackground="#ffffff", selectcolor="#ffffff")
-        ai_check.pack(anchor=tk.W, pady=(10, 0))
-        
         self.gen_locate_report = tk.BooleanVar(value=True)
         locate_report_check = tk.Checkbutton(card, text="📄 输出详细定位报告 (.md)", variable=self.gen_locate_report, bg="#ffffff", font=("微软雅黑", 10),
                                             activebackground="#ffffff", selectcolor="#ffffff")
@@ -97,7 +92,6 @@ class LeakFixTab(BaseTab):
             return
             
         options = {key: var.get() for key, var in self.fix_options.items()}
-        options['ai_fix'] = self.use_ai_fix.get()
         
         self.leak_fix_btn.config(state=tk.DISABLED)
         self.leak_fix_log("[*] 正在启动泄露定位&修复引擎...")
@@ -105,7 +99,7 @@ class LeakFixTab(BaseTab):
         self.fixer.log = self.leak_fix_log
         
         threading.Thread(target=self.fixer.leak_fix_worker, 
-                         args=(path, self.app.mpq_editor_path, self.app.base_dir, self.update_fix_stats, self.on_fix_finish, options), 
+                         args=(path, self.app.mpq_editor_path, self.app.data_dir, self.update_fix_stats, self.on_fix_finish, options), 
                          daemon=True).start()
 
     def start_leak_locate(self):
@@ -126,10 +120,10 @@ class LeakFixTab(BaseTab):
             self.app.root.after(0, lambda: self.leak_locate_btn.config(state=tk.NORMAL))
             self.leak_fix_log("[+] 定位分析结束。")
             if options['gen_report']:
-                os.startfile(self.app.base_dir)
+                os.startfile(self.app.data_dir)
 
         threading.Thread(target=self.fixer.leak_locate_worker, 
-                         args=(path, self.app.mpq_editor_path, self.app.base_dir, on_finish, options), 
+                         args=(path, self.app.mpq_editor_path, self.app.data_dir, on_finish, options), 
                          daemon=True).start()
 
     def generate_report(self):
@@ -143,10 +137,10 @@ class LeakFixTab(BaseTab):
         def run():
             try:
                 # 使用 Auditor 的代码切片功能
-                self.auditor.generate_ai_slicing_report(path, self.app.mpq_editor_path, self.app.base_dir)
+                self.auditor.generate_ai_slicing_report(path, self.app.mpq_editor_path, self.app.data_dir)
                 
                 # 同时生成原有的 Fixer 报告 (互补)
-                temp_dir = os.path.join(self.app.base_dir, "ai_slicing")
+                temp_dir = os.path.join(self.app.data_dir, "ai_slicing")
                 os.makedirs(temp_dir, exist_ok=True)
                 
                 script_path = os.path.join(temp_dir, "war3map.j")
@@ -156,12 +150,12 @@ class LeakFixTab(BaseTab):
                     
                     options = {key: var.get() for key, var in self.fix_options.items()}
                     report = self.fixer.generate_ai_report(text, options)
-                    report_path = os.path.join(self.app.base_dir, f"Leak_Fixer_{os.path.basename(path)}.md")
+                    report_path = os.path.join(self.app.data_dir, f"Leak_Fixer_{os.path.basename(path)}.md")
                     with open(report_path, 'w', encoding='utf-8') as f:
                         f.write(report)
                     self.leak_fix_log(f"[+] 详细泄露报告已生成: {report_path}")
                 
-                os.startfile(self.app.base_dir) # 打开文件夹查看生成的 md 文件
+                os.startfile(self.app.data_dir) # 打开文件夹查看生成的 md 文件
             except Exception as e:
                 self.leak_fix_log(f"[-] 生成报告失败: {e}")
             finally:

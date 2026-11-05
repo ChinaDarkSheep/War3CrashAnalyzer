@@ -82,6 +82,12 @@ class MinidumpParser:
                     # Base(8), Size(4), CheckSum(4), TimeDateStamp(4), NameRva(4), VersionInfo(48), CVRecord(8), MiscRecord(8)
                     m_data = f.read(108) # 64-bit module entry size
                     base, size, _, _, name_rva = struct.unpack('<QIIII', m_data[:24])
+                    # VS_FIXEDFILEINFO 紧随其后：dwSignature(4) dwStrucVersion(4) dwFileVersionMS(4) dwFileVersionLS(4)
+                    file_version = None
+                    if len(m_data) >= 40:
+                        ms, ls = struct.unpack('<II', m_data[32:40])
+                        if ms or ls:
+                            file_version = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
                     
                     # Read name
                     curr_pos = f.tell()
@@ -94,7 +100,8 @@ class MinidumpParser:
                         'name': os.path.basename(name),
                         'path': name,
                         'base': base,
-                        'size': size
+                        'size': size,
+                        'file_version': file_version
                     })
                     
         return True
