@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec.bak
+
+# 运行时数据
+history.db
+server/crash_data.db
+temp_audit/
+temp_jass/
+ai_slicing/
+temp_fix/
+extracted_*/
+
+# 工具/编辑器
+.workbuddy-ai/
+.qoder/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

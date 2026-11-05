@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <Name Value="wc3"/>
+    <Type Value="RunAndDesignTime"/>
+    <CompilerOptions>
+      <Version Value="11"/>
+      <SearchPaths>
+        <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
+      </SearchPaths>
+      <CodeGeneration>
+        <Optimizations>
+          <OptimizationLevel Value="0"/>
+        </Optimizations>
+      </CodeGeneration>
+      <Linking>
+        <Debugging>
+          <GenerateDebugInfo Value="False"/>
+        </Debugging>
+      </Linking>
+      <Other>
+        <CompilerMessages>
+          <IgnoredMessages idx4082="True" idx4055="True"/>
+        </CompilerMessages>
+        <CustomOptions Value="$(MyPackageOptions)"/>
+      </Other>
+    </CompilerOptions>
+    <Files>
+      <Item>
+        <Filename Value="wc3collections.pas"/>
+        <UnitName Value="wc3collections"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3jassvm.pas"/>
+        <UnitName Value="wc3jassvm"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3main.pas"/>
+        <UnitName Value="wc3main"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3memory.pas"/>
+        <UnitName Value="wc3memory"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3props.pas"/>
+        <UnitName Value="wc3props"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3refcnt.pas"/>
+        <UnitName Value="wc3refcnt"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3string.pas"/>
+        <UnitName Value="wc3string"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3stringhash.pas"/>
+        <UnitName Value="wc3stringhash"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3game.pas"/>
+        <UnitName Value="wc3game"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3timer.pas"/>
+        <UnitName Value="wc3timer"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3tls.pas"/>
+        <UnitName Value="wc3tls"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3files.pas"/>
+        <UnitName Value="wc3files"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3agent.pas"/>
+        <UnitName Value="wc3agent"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3observer.pas"/>
+        <UnitName Value="wc3observer"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3nettag.pas"/>
+        <UnitName Value="wc3nettag"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3typeid.pas"/>
+        <UnitName Value="wc3typeid"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3player.pas"/>
+        <UnitName Value="wc3player"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3_chat_command.pas"/>
+        <UnitName Value="wc3_chat_command"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3_native_signature_parser.pas"/>
+        <UnitName Value="wc3_native_signature_parser"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3netdata.pas"/>
+        <UnitName Value="wc3netdata"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3netcommands.pas"/>
+        <UnitName Value="wc3netcommands"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3_observer_callback.pas"/>
+        <UnitName Value="wc3_observer_callback"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3gui.pas"/>
+        <UnitName Value="wc3gui"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3float.pas"/>
+        <UnitName Value="wc3float"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3debug.pas"/>
+        <UnitName Value="wc3Debug"/>
+      </Item>
+      <Item>
+        <Filename Value="wc3_game_state.pas"/>
+        <UnitName Value="wc3_game_state"/>
+      </Item>
+    </Files>
+    <RequiredPkgs>
+      <Item>
+        <PackageName Value="HackUtils"/>
+      </Item>
+      <Item>
+        <PackageName Value="FCL"/>
+      </Item>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)"/>
+    </UsageOptions>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+  </Package>
+</CONFIG>
