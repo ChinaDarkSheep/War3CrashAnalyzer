@@ -283,17 +283,13 @@
         }
       },
       "1.27a": {
-        "0x0050A568": {
-          "desc": "移除英雄属性崩溃。检测到脚本尝试对英雄执行 UnitRemoveAbility(..., 'AHer')，这会摧毁英雄数据结构导致 UI 访问冲突。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
-        },
         "0x0050B568": {
-          "desc": "移除英雄属性崩溃。检测到脚本尝试对英雄执行 UnitRemoveAbility(..., 'AHer')，这会摧毁英雄数据结构导致 UI 访问冲突。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "英雄单位详情面板刷新名称时的空指针崩溃。CInfoPanelUnitDetail 在单位原始码首字母为大写（英雄）时调用名称格式化函数 0x50B550，经调整 thunk 读取 CUnit+0x1F0 作为名称对象；该字段为空指针，首条指令 mov eax,[ebx+0x30] 访问 0x30 触发访问违规。实测崩溃对象为 CUnit（rawcode Hamg），+0x1F0=0。旧文案所称 UnitRemoveAbility(..., 'AHer') 无任何日志证据。",
+          "source": "static/2026-11-05",
+          "confidence": 0.75,
+          "verified": true,
+          "attribution": "暂无法确定",
+          "suggestion": "这是引擎单位详情面板的名称刷新路径，暂无法对应到具体地图脚本。优先在单机/世界编辑器测试中复现；若同一张地图反复出现，把 Crash.txt 与同名 .dmp 一并交给地图作者和平台排查。"
         },
         "0x000A08A7": {
           "desc": "引擎 UI 帧/上下文注册崩溃（CFrame.cpp）。Game.dll 在注册帧上下文时拿到空对象，未判空就读取其 +0x8 字段，崩溃时 ESI=0；常见于地图初始化或清理阶段大量创建/销毁 UI 帧，或脚本在帧尚未就绪时重复注册。与音频句柄无关。",
