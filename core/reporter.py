@@ -10,6 +10,38 @@ from core.auditor import Auditor
 from core.history import HistoryTracker
 from core.logtext import read_log
 
+
+def _md5_file(path, chunk_size=1024 * 1024):
+    digest = hashlib.md5()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _map_info(map_path):
+    path = (map_path or "").strip().strip('"')
+    if not path or not os.path.isfile(path):
+        return None, None
+    try:
+        return _md5_file(path), os.path.basename(path)
+    except OSError:
+        return None, None
+
+
+def _plain_stack(frames, limit=48):
+    stack = []
+    for frame in (frames or [])[:limit]:
+        module = (frame.get("module") or "").replace("/", "\\").rsplit("\\", 1)[-1]
+        rva = frame.get("rva")
+        if module or rva is not None:
+            stack.append({"module": module, "rva": rva})
+    return stack
+
+
 class Reporter:
     def __init__(self, log_func, base_dir=None):
         self.log = log_func
@@ -63,9 +95,10 @@ class Reporter:
         self.log(f"[*] 发现 {total} 份未上报日志，准备开始批量上报...")
         
         if not is_auto:
-            if not messagebox.askyesno("用户许可", f"发现 {total} 份未上报的崩溃日志，是否将它们及基本系统信息发送给开发者进行分析？\n\n这有助于我们改进工具并定位崩溃原因。"):
+            if not messagebox.askyesno("用户许可", f"发现 {total} 份未上报的崩溃日志，是否将它们及基本系统信息发送给开发者进行分析？\n\n上报内容还包括本地分析得到的游戏版本、调用栈指纹、归属结论与地图哈希；不会上传地图文件。\n\n这有助于我们改进工具并定位崩溃原因。"):
                 return
 
+        map_hash, selected_map = _map_info(map_path)
         success_count = 0
         for i, target_log_name in enumerate(unreported_logs):
             self.log(f"[*] [{i+1}/{total}] 正在上报: {target_log_name}...")
@@ -76,20 +109,59 @@ class Reporter:
                 
                 content_hash = hashlib.md5(log_content.encode('utf-8')).hexdigest()
                 
-                # 本地预分析（get_analysis_data 返回 5 元组：addr, relative_offset, analysis_text, map_name, module_name）
-                addr, rel_offset, analysis, log_map_name, log_mod_name = self.silent_auditor.get_analysis_data(log_content)
+                # 本地预分析：文本日志 + 同名 dump，补版本、调用栈与指纹
+                diagnosis = self.silent_auditor.analyze_log_content(log_content)
+                dmp_file = os.path.splitext(latest_log)[0] + ".dmp"
+                if os.path.exists(dmp_file):
+                    dmp = self.silent_auditor._analyze_dmp(dmp_file)
+                    diagnosis = self.silent_auditor._merge_dmp(diagnosis, dmp)
+                addr = diagnosis["addr"]
+                rel_offset = diagnosis["relative_offset"]
+                analysis = diagnosis["analysis_text"]
+                log_map_name = diagnosis["map_name"]
+                log_mod_name = diagnosis["module_name"]
+                conclusion = diagnosis.get("conclusion") or {}
+                fingerprint = diagnosis.get("fingerprint") or {}
+                dmp_info = diagnosis.get("dmp") or {}
                 
-                # 优先使用从日志里提取的地图名，如果没有再使用界面上的
-                final_map_name = log_map_name if log_map_name != "Unknown" else (os.path.basename(map_path) if map_path else "Unknown")
+                # 优先使用日志里的地图名；只有与所选地图文件同名时才附带哈希，避免张冠李戴
+                if log_map_name != "Unknown":
+                    final_map_name = log_map_name
+                    log_map_hash = (map_hash if selected_map
+                                    and selected_map.lower() == log_map_name.lower()
+                                    else None)
+                else:
+                    final_map_name = selected_map or "Unknown"
+                    log_map_hash = map_hash
                 
                 report_data = {
+                    "tool": "War3CrashAnalyzer",
                     "os": platform.platform(),
                     "processor": platform.processor(),
                     "python_version": platform.python_version(),
                     "map": final_map_name,
+                    "map_hash": log_map_hash,
                     "log_name": os.path.basename(latest_log),
                     "log_content": log_content[:5000],
                     "crash_address": rel_offset if rel_offset else addr,
+                    "module": log_mod_name,
+                    "relative_offset": rel_offset,
+                    "game_version": diagnosis.get("version"),
+                    "attribution": conclusion.get("attribution"),
+                    "confidence": conclusion.get("confidence"),
+                    "fingerprint": fingerprint.get("signature"),
+                    "fingerprint_version": fingerprint.get("version"),
+                    "fingerprint_frames": fingerprint.get("frames") or [],
+                    "stack": _plain_stack(diagnosis.get("stack")),
+                    "dmp": ({
+                        "engine": dmp_info.get("engine"),
+                        "exception": dmp_info.get("exception"),
+                        "module": dmp_info.get("module"),
+                        "rva": dmp_info.get("rva"),
+                        "file_version": dmp_info.get("file_version"),
+                        "version": dmp_info.get("version"),
+                        "fallback": dmp_info.get("fallback"),
+                    } if dmp_info else None),
                     "analysis_result": analysis,
                     "timestamp": time.time(),
                     "content_hash": content_hash

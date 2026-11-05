@@ -540,10 +540,6 @@ class Auditor:
             "version": log_version,
         }
 
-    def get_analysis_data(self, log_content):
-        r = self.analyze_log_content(log_content)
-        return (r["addr"], r["relative_offset"], r["analysis_text"], r["map_name"], r["module_name"])
-
     def _analyze_dmp(self, dmp_file):
         """解析伴随 dump 并查表；返回结构化结果，失败返回 None。"""
         self.log(f"[*] 发现伴随 Dump 文件: {os.path.basename(dmp_file)}")

@@ -43,10 +43,10 @@ def normalize_offset(value):
 def normalize_version(text):
     if not text:
         return None
-    letter = re.search(r"(1\.\d{2}[a-z])", str(text), re.IGNORECASE)
+    letter = re.search(r"\b(1\.\d{2}[a-z])\b", str(text), re.IGNORECASE)
     if letter:
         return letter.group(1).lower()
-    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", str(text))
+    m = re.search(r"\b(\d+)\.(\d+)(?:\.(\d+))?", str(text))
     if not m:
         return None
     parts = [g for g in m.groups() if g is not None]
@@ -80,7 +80,26 @@ def init_db():
         print("[*] 正在为旧数据库添加 content_hash 列...")
         c.execute("ALTER TABLE crash_reports ADD COLUMN content_hash TEXT")
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_content_hash ON crash_reports(content_hash)")
-        
+
+    # P2.1 上报字段：版本 / 模块 / 归属 / 指纹 / 地图哈希 / 调用栈
+    new_columns = {
+        'module': 'TEXT',
+        'relative_offset': 'TEXT',
+        'game_version': 'TEXT',
+        'attribution': 'TEXT',
+        'confidence': 'REAL',
+        'fingerprint': 'TEXT',
+        'fingerprint_version': 'TEXT',
+        'fingerprint_frames': 'TEXT',
+        'map_hash': 'TEXT',
+        'stack': 'TEXT',
+        'dmp_info': 'TEXT',
+    }
+    for name, decl in new_columns.items():
+        if name not in columns:
+            print(f"[*] 正在为旧数据库添加 {name} 列...")
+            c.execute(f"ALTER TABLE crash_reports ADD COLUMN {name} {decl}")
+
     conn.commit()
     conn.close()
 
@@ -88,6 +107,93 @@ init_db()
 
 def get_content_hash(content):
     return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+
+def _text(value, limit):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:limit] or None
+
+
+ATTRIBUTIONS = {"地图", "本机环境或对战平台", "编辑器", "暂无法确定"}
+
+
+def _attribution(value):
+    text = _text(value, 40)
+    return text if text in ATTRIBUTIONS else None
+
+
+def _module(value):
+    text = _text(value, 120)
+    return None if not text or text.lower() == "unknown" else text
+
+
+def _confidence(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, number))
+
+
+def _fingerprint(value):
+    text = _text(value, 64)
+    return text.upper() if text and re.fullmatch(r"[0-9A-Fa-f]{6,64}", text) else None
+
+
+def _map_hash(value):
+    text = _text(value, 64)
+    return text.lower() if text and re.fullmatch(r"[0-9A-Fa-f]{32}", text) else None
+
+
+def _json_text(value, limit=4000):
+    try:
+        return json.dumps(value, ensure_ascii=False)[:limit]
+    except (TypeError, ValueError):
+        return None
+
+
+def _frame_list(values, limit=10):
+    if not isinstance(values, list):
+        return None
+    frames = [_text(value, 120) for value in values[:limit]]
+    frames = [frame for frame in frames if frame]
+    return _json_text(frames) if frames else None
+
+
+def _stack_list(frames, limit=48):
+    if not isinstance(frames, list):
+        return None
+    stack = []
+    for frame in frames[:limit]:
+        if not isinstance(frame, dict):
+            continue
+        module = _text(frame.get('module'), 120)
+        rva = frame.get('rva')
+        if isinstance(rva, bool) or not isinstance(rva, int) or rva < 0:
+            rva = None
+        if module or rva is not None:
+            stack.append({'module': module, 'rva': rva})
+    return _json_text(stack) if stack else None
+
+
+def _clean_dmp(value):
+    if not isinstance(value, dict):
+        return None
+    exception = value.get('exception')
+    if isinstance(exception, dict):
+        exception = exception.get('code')
+    cleaned = {
+        'engine': _text(value.get('engine'), 20),
+        'exception': _text(exception, 20),
+        'module': _module(value.get('module')),
+        'rva': _text(value.get('rva'), 20),
+        'file_version': _text(value.get('file_version'), 40),
+        'version': _text(value.get('version'), 20),
+        'fallback': bool(value.get('fallback')),
+    }
+    return _json_text(cleaned) if any(cleaned.values()) else None
 
 def extract_crash_info(log_content):
     """
@@ -207,16 +313,58 @@ def report_crash():
     else:
         map_name = client_map
 
+    fields = (
+        map_name,
+        os_info,
+        addr,
+        log_content,
+        content_hash,
+        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        analysis,
+        _module(data.get('module')),
+        normalize_offset(data.get('relative_offset')),
+        normalize_version(_text(data.get('game_version'), 40)),
+        _attribution(data.get('attribution')),
+        _confidence(data.get('confidence')),
+        _fingerprint(data.get('fingerprint')),
+        normalize_version(_text(data.get('fingerprint_version'), 40)),
+        _frame_list(data.get('fingerprint_frames')),
+        _map_hash(data.get('map_hash')),
+        _stack_list(data.get('stack')),
+        _clean_dmp(data.get('dmp')),
+    )
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        c.execute("INSERT INTO crash_reports (map_name, os_info, crash_address, log_content, content_hash, timestamp, analysis_result) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (map_name, os_info, addr, log_content, content_hash, now_str, analysis))
+        c.execute('''INSERT INTO crash_reports
+                     (map_name, os_info, crash_address, log_content, content_hash,
+                      timestamp, analysis_result, module, relative_offset,
+                      game_version, attribution, confidence, fingerprint,
+                      fingerprint_version, fingerprint_frames, map_hash,
+                      stack, dmp_info)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  fields)
         conn.commit()
         status = "success"
     except sqlite3.IntegrityError:
         status = "duplicate"
+        # 旧记录可能缺少 P2 字段：同一日志再次上报时补齐，不覆盖已有值
+        c.execute('''UPDATE crash_reports SET
+                     module = COALESCE(module, ?),
+                     relative_offset = COALESCE(relative_offset, ?),
+                     game_version = COALESCE(game_version, ?),
+                     attribution = COALESCE(attribution, ?),
+                     confidence = COALESCE(confidence, ?),
+                     fingerprint = COALESCE(fingerprint, ?),
+                     fingerprint_version = COALESCE(fingerprint_version, ?),
+                     fingerprint_frames = COALESCE(fingerprint_frames, ?),
+                     map_hash = COALESCE(map_hash, ?),
+                     stack = COALESCE(stack, ?),
+                     dmp_info = COALESCE(dmp_info, ?)
+                     WHERE content_hash = ?''',
+                  fields[7:18] + (content_hash,))
+        conn.commit()
     conn.close()
     
     return jsonify({"status": status, "analysis": analysis})
@@ -277,7 +425,9 @@ def get_crashes():
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
-    query = "SELECT id, map_name, crash_address, analysis_result, timestamp FROM crash_reports"
+    query = ("SELECT id, map_name, map_hash, crash_address, module, relative_offset, "
+             "game_version, attribution, confidence, fingerprint, fingerprint_version, "
+             "analysis_result, timestamp FROM crash_reports")
     where_clauses = []
     params = []
     if map_filter:

@@ -92,7 +92,10 @@
                 <thead>
                     <tr>
                         <th style="width: 150px;">时间</th>
-                        <th style="width: 200px;">地图名称</th>
+                        <th style="width: 180px;">地图名称</th>
+                        <th style="width: 70px;">版本</th>
+                        <th style="width: 120px;">归属</th>
+                        <th style="width: 110px;">栈指纹</th>
                         <th style="width: 120px;">偏移地址</th>
                         <th>深度诊断结果</th>
                     </tr>
@@ -108,6 +111,12 @@
         let mapChart = null;
         let reasonChart = null;
         let trendChart = null;
+
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
 
         async function fetchData() {
             const mapFilter = document.getElementById('map-filter').value;
@@ -194,11 +203,14 @@
                 const body = document.getElementById('crash-body');
                 body.innerHTML = crashes.map(c => `
                     <tr>
-                        <td style="color: #888; font-size: 0.9em;">${new Date(c.timestamp).toLocaleString()}</td>
-                        <td style="font-weight: 500;">${c.map_name}</td>
-                        <td><code class="badge badge-danger">${c.crash_address}</code></td>
+                        <td style="color: #888; font-size: 0.9em;">${esc(new Date(c.timestamp).toLocaleString())}</td>
+                        <td style="font-weight: 500;">${esc(c.map_name)}</td>
+                        <td>${esc(c.game_version || '—')}</td>
+                        <td>${esc(c.attribution || '—')}</td>
+                        <td><code class="badge badge-info">${esc(c.fingerprint || '—')}</code></td>
+                        <td><code class="badge badge-danger">${esc(c.crash_address)}</code></td>
                         <td>
-                            <div style="font-size: 0.95em;">${c.analysis_result}</div>
+                            <div style="font-size: 0.95em;">${esc(c.analysis_result)}</div>
                         </td>
                     </tr>
                 `).join('');
