@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext
 from gui.tabs.base import BaseTab
 from core.auditor import Auditor
+from core.bundle import default_bundle_name, export_bundle
 
 class StaticTab(BaseTab):
     def setup_ui(self):
@@ -41,6 +42,9 @@ class StaticTab(BaseTab):
 
         self.crash_btn = tk.Button(btn_container, text="📄 诊断日志", command=self.analyze_last_crash, bg="#9b59b6", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.crash_btn.pack(side=tk.LEFT, padx=2)
+
+        self.export_bundle_btn = tk.Button(btn_container, text="📦 诊断包", command=self.export_diagnostic_bundle, bg="#16a085", fg="white", font=("微软雅黑", 9, "bold"), width=12)
+        self.export_bundle_btn.pack(side=tk.LEFT, padx=2)
 
         self.desync_log_btn = tk.Button(btn_container, text="🌐 同步日志", command=self.start_desync_log_analysis, bg="#f39c12", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.desync_log_btn.pack(side=tk.LEFT, padx=2)
@@ -124,6 +128,72 @@ class StaticTab(BaseTab):
                 self.app.root.after(0, lambda: self.crash_btn.config(state=tk.NORMAL))
                 self.update_status("崩溃日志分析完毕")
         
+        threading.Thread(target=run, daemon=True).start()
+
+    def export_diagnostic_bundle(self):
+        war3_dir = self.app.war3_path.get().strip('"')
+        if not war3_dir or not os.path.isdir(war3_dir):
+            tk.messagebox.showwarning("提示", "请先设置正确的魔兽目录！")
+            return
+        errors_dir = os.path.join(war3_dir, "Errors")
+        logs = []
+        if os.path.isdir(errors_dir):
+            logs = [f for f in os.listdir(errors_dir)
+                    if f.lower().endswith(".txt")]
+        if not logs:
+            tk.messagebox.showinfo("提示", "未找到任何崩溃日志。")
+            return
+
+        log_name = max(logs, key=lambda f: os.path.getmtime(
+            os.path.join(errors_dir, f)))
+        log_path = os.path.join(errors_dir, log_name)
+        map_path = self.app.map_path.get().strip('"')
+
+        try:
+            result = self.auditor.analyze_log_file(log_path)
+        except Exception as e:
+            tk.messagebox.showerror("导出失败", f"诊断日志时出错：{e}")
+            return
+
+        output = filedialog.asksaveasfilename(
+            title="保存诊断包",
+            defaultextension=".zip",
+            initialfile=default_bundle_name(result.get("map_name")),
+            filetypes=[("Zip 压缩包", "*.zip")])
+        if not output:
+            return
+
+        self.export_bundle_btn.config(state=tk.DISABLED)
+        self.update_status("正在生成诊断包...")
+
+        def run():
+            try:
+                _, summary = export_bundle(
+                    log_path, result, output, map_path or None)
+
+                def done():
+                    self.log(f"\n[+] 诊断包已生成: {output}")
+                    self.log(summary)
+                    self.update_status("诊断包已生成，摘要已复制到剪贴板")
+                    try:
+                        self.app.root.clipboard_clear()
+                        self.app.root.clipboard_append(summary)
+                    except Exception:
+                        pass
+                    self.export_bundle_btn.config(state=tk.NORMAL)
+                    tk.messagebox.showinfo(
+                        "导出完成",
+                        f"诊断包已生成：\n{output}\n\nQQ 群摘要已复制到剪贴板。")
+
+                self.app.root.after(0, done)
+            except Exception as e:
+                def fail():
+                    self.update_status("诊断包生成失败")
+                    self.export_bundle_btn.config(state=tk.NORMAL)
+                    tk.messagebox.showerror("导出失败", str(e))
+
+                self.app.root.after(0, fail)
+
         threading.Thread(target=run, daemon=True).start()
 
     def start_desync_log_analysis(self):
