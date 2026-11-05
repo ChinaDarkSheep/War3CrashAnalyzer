@@ -1,0 +1,6 @@
+# Minidump 解析依赖库内部结构（流类型、上下文偏移），锁定已验证版本
+minidump==0.0.24
+mpyq
+pillow
+psutil
+pystray

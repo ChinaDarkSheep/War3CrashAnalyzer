@@ -327,6 +327,7 @@ class Auditor:
         conclusion = None
         matches = []
         detail_text = ""
+        log_version = None
 
         try:
             # 1. 匹配地址和模块 (增强型)
@@ -455,6 +456,7 @@ class Auditor:
                     "environment": environment,
                     "conclusion": conclusion,
                     "fingerprint": None,
+                    "version": None,
                 }
 
             # 4. 匹配知识库：版本 + 精确 RVA，不做任何后缀/跨版本模糊匹配
@@ -535,16 +537,133 @@ class Auditor:
             "environment": environment,
             "conclusion": conclusion,
             "fingerprint": fingerprint,
+            "version": log_version,
         }
 
     def get_analysis_data(self, log_content):
         r = self.analyze_log_content(log_content)
         return (r["addr"], r["relative_offset"], r["analysis_text"], r["map_name"], r["module_name"])
 
+    def _analyze_dmp(self, dmp_file):
+        """解析伴随 dump 并查表；返回结构化结果，失败返回 None。"""
+        self.log(f"[*] 发现伴随 Dump 文件: {os.path.basename(dmp_file)}")
+        parser = MinidumpParser(dmp_file)
+        try:
+            if not parser.parse():
+                self.log("[-] Dump 解析失败。")
+                return None
+        except Exception as e:
+            self.log(f"[-] Dump 分析异常: {e}")
+            return None
+
+        info = {
+            "engine": parser.engine,
+            "exception": parser.exception,
+            "stack": parser.stack,
+            "module": parser.crash_module,
+            "rva": parser.crash_rva,
+            "file_version": parser.crash_file_version,
+            "version": None,
+            "fallback": parser.crash_fallback,
+            "analysis": "",
+            "matches": [],
+        }
+
+        if parser.exception:
+            code = parser.exception["code"]
+            explanation = "未知异常代码"
+            for key, value in EXCEPTION_CODES.items():
+                if key.lower() == code.lower():
+                    explanation = value
+                    break
+            self.log(f"[+] Dump 异常码: {code}")
+            self.log(f"    解释: {explanation}")
+            self.log(f"[+] Dump 崩溃地址: {parser.exception['address']}")
+
+        if parser.crash_module and parser.crash_rva is not None:
+            mod_version = (normalize_version(parser.crash_file_version)
+                           if parser.crash_file_version else None)
+            info["version"] = mod_version
+            offset = normalize_offset(hex(parser.crash_rva))
+            if parser.crash_fallback:
+                self.log("[!] Dump 异常地址不在任何模块内，已改用栈顶帧定位。")
+            self.log(f"[+] 崩溃发生于模块: {parser.crash_module} "
+                     f"(相对偏移: {offset}, 文件版本: {parser.crash_file_version or '未知'})")
+            info["analysis"] += f"[{parser.crash_module}+{offset}] "
+            for ver, entry in lookup(parser.crash_module, mod_version, offset):
+                hit = describe(entry, ver, mod_version is not None)
+                self.log(f"[+] 命中知识库: {hit}")
+                info["analysis"] += hit + " "
+                info["matches"].append({"version": ver, "text": hit})
+        elif parser.exception:
+            self.log("[-] 无法从 Dump 定位崩溃模块。")
+
+        if parser.stack:
+            self.log(f"[+] Dump 调用栈（{len(parser.stack)} 帧）:")
+            for frame in parser.stack[:8]:
+                self.log(f"    {frame['module']}+0x{frame['rva']:08X}")
+            summary = describe_stack(parser.stack)
+            if summary:
+                info["analysis"] += f"调用栈：{summary}"
+        else:
+            self.log("[-] Dump 未提供调用栈（可能缺少异常上下文）。")
+
+        scripts = parser.extract_strings(b'war3map', 8)
+        if scripts:
+            self.log(f"[+] 提取到 {len(scripts)} 条脚本相关线索:")
+            for value in scripts[:5]:
+                self.log(f"    - {value}")
+
+        info["analysis"] = info["analysis"].strip()
+        return info
+
+    def _merge_dmp(self, result, dmp):
+        """把 dump 结果并入文本诊断：补版本、补栈、必要时重算指纹。"""
+        if not dmp:
+            result["dmp"] = None
+            return result
+
+        result["dmp"] = {
+            "engine": dmp["engine"],
+            "exception": dmp["exception"],
+            "stack": dmp["stack"],
+            "module": dmp["module"],
+            "rva": ("0x%08X" % dmp["rva"]) if dmp["rva"] is not None else None,
+            "file_version": dmp["file_version"],
+            "version": dmp["version"],
+            "fallback": dmp["fallback"],
+            "analysis": dmp["analysis"],
+        }
+
+        if not result.get("stack") and dmp.get("stack"):
+            result["stack"] = dmp["stack"]
+
+        version = dmp.get("version")
+        needs_fingerprint = (not result.get("fingerprint")
+                             or (version and not result.get("version")))
+        has_frames = bool(result.get("stack")) or bool(result["dmp"]["rva"])
+        if version and needs_fingerprint and has_frames:
+            module = result.get("module_name")
+            if module == "Unknown":
+                module = dmp.get("module")
+            fingerprint = build_fingerprint(
+                result["stack"], version=version,
+                module_name=module, rva=result["dmp"]["rva"])
+            if fingerprint:
+                result["fingerprint"] = fingerprint
+                result["version"] = version
+        return result
+
     def analyze_log_file(self, log_path):
         """诊断单个日志（自动收集用）：分析文本并记录历史与指纹。"""
         content = read_log(log_path)
         result = self.analyze_log_content(content)
+        dmp_path = os.path.splitext(log_path)[0] + ".dmp"
+        dmp = self._analyze_dmp(dmp_path) if os.path.exists(dmp_path) else None
+        result = self._merge_dmp(result, dmp)
+        if dmp and dmp.get("analysis"):
+            result["analysis_text"] = (dmp["analysis"] + "\n"
+                                       + result["analysis_text"]).strip()
         name = os.path.basename(log_path)
         stats = None
         if self.history:
@@ -629,57 +748,17 @@ class Auditor:
             analysis_summary = ""
             try:
                 # 1. 优先分析 .dmp 文件 (二进制分析)；回溯建指纹时只读文本，避免启动过慢
-                dmp_analysis_success = False
+                dmp_info = None
                 if os.path.exists(dmp_file) and not backfill:
-                    self.log(f"[*] 发现伴随 Dump 文件: {os.path.basename(dmp_file)}")
-                    parser = MinidumpParser(dmp_file)
-                    try:
-                        if parser.parse():
-                            dmp_analysis_success = True
-                            if parser.exception:
-                                code = parser.exception['code']
-                                addr = parser.exception['address']
-                                
-                                # 兼容性查找：忽略大小写并统一格式
-                                explanation = "未知异常代码"
-                                for k, v in EXCEPTION_CODES.items():
-                                    if k.lower() == code.lower():
-                                        explanation = v
-                                        break
-                                        
-                                self.log(f"[+] Dump 异常码: {code}")
-                                self.log(f"    解释: {explanation}")
-                                self.log(f"[+] Dump 崩溃地址: {addr}")
-                                
-                                # 定位崩溃模块，并用 dmp 内的文件版本查知识库
-                                crash_mod = "Unknown"
-                                target_addr = int(addr, 16)
-                                for mod in parser.modules:
-                                    if mod['base'] <= target_addr < (mod['base'] + mod['size']):
-                                        crash_mod = mod['name']
-                                        mod_version = normalize_version(mod.get('file_version'))
-                                        offset = normalize_offset(hex(target_addr - mod['base']))
-                                        self.log(f"[+] 崩溃发生于模块: {crash_mod} "
-                                                 f"(相对偏移: {offset}, 文件版本: {mod.get('file_version') or '未知'})")
-                                        analysis_summary += f"[{crash_mod}+{offset}] "
-                                        for ver, entry in lookup(crash_mod, mod_version, offset):
-                                            hit = describe(entry, ver, mod_version is not None)
-                                            self.log(f"[+] 命中知识库: {hit}")
-                                            analysis_summary += hit + " "
-                                        break
-                            
-                            # 提取 war3map 相关字符串
-                            scripts = parser.extract_strings(b'war3map', 8)
-                            if scripts:
-                                self.log(f"[+] 提取到 {len(scripts)} 条脚本相关线索:")
-                                for s in scripts[:5]: # 只显示前5条
-                                    self.log(f"    - {s}")
-                    except Exception as de:
-                        self.log(f"[-] Dump 分析异常: {de}")
-                
+                    dmp_info = self._analyze_dmp(dmp_file)
+                dmp_analysis_success = dmp_info is not None
+                if dmp_info:
+                    analysis_summary = dmp_info["analysis"]
+
                 # 2. 传统文本日志分析 (逻辑降级/互补)
                 content = read_log(latest_log)
                 result = self.analyze_log_content(content)
+                result = self._merge_dmp(result, dmp_info)
                 addr = result["addr"]
                 relative_offset = result["relative_offset"]
                 analysis = result["analysis_text"]
@@ -711,7 +790,8 @@ class Auditor:
                                         if analysis_summary else analysis)
                 elif conc is None:
                     self.log(f"[-] {analysis}")
-                    analysis_summary = analysis
+                    analysis_summary = (analysis_summary + "\n" + analysis
+                                        if analysis_summary else analysis)
 
                 if detail_text:
                     self.log("[!] 补充依据：")

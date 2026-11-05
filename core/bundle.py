@@ -75,6 +75,22 @@ def _plugin_list(environment):
     return plugins
 
 
+def _plain_dmp(dmp):
+    """压缩 dump 信息，保留查表所需的版本/模块/偏移，去掉本机路径。"""
+    if not dmp:
+        return None
+    return {
+        "engine": dmp.get("engine"),
+        "exception": dmp.get("exception"),
+        "module": dmp.get("module"),
+        "rva": dmp.get("rva"),
+        "file_version": dmp.get("file_version"),
+        "version": dmp.get("version"),
+        "fallback": dmp.get("fallback"),
+        "stack": _plain_stack(dmp.get("stack")),
+    }
+
+
 def build_bundle(log_path, diagnosis, map_path=None):
     """组装诊断包数据；diagnosis 为 Auditor.analyze_log_content 的结果。"""
     diagnosis = diagnosis or {}
@@ -98,12 +114,16 @@ def build_bundle(log_path, diagnosis, map_path=None):
     if os.path.exists(dmp_path):
         files["dmp"] = _file_info(dmp_path, with_hash=False)
 
+    game_version = normalize_version(build_raw) if build_raw else None
+    if not game_version:
+        game_version = diagnosis.get("version")
+
     bundle = {
         "schema": SCHEMA_VERSION,
         "tool": "War3CrashAnalyzer",
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "version": {
-            "normalized": normalize_version(build_raw) if build_raw else None,
+            "normalized": game_version,
             "raw": build_raw,
         },
         "map": map_info,
@@ -128,6 +148,7 @@ def build_bundle(log_path, diagnosis, map_path=None):
             },
             "fingerprint": fingerprint,
             "fingerprint_stats": diagnosis.get("fingerprint_stats"),
+            "dmp": _plain_dmp(diagnosis.get("dmp")),
         },
     }
     return bundle
@@ -147,6 +168,13 @@ def build_summary_text(bundle):
     game_version = version.get("normalized") or version.get("raw")
     if game_version:
         lines.append(f"游戏版本：{game_version}")
+
+    dmp = diagnosis.get("dmp") or {}
+    if dmp.get("module") and dmp.get("rva"):
+        detail = f"Dump：{dmp['module']}+{dmp['rva']}"
+        if dmp.get("file_version"):
+            detail += f"（文件版本 {dmp['file_version']}）"
+        lines.append(detail)
 
     if conclusion:
         confidence = int(round((conclusion.get("confidence") or 0) * 100))
