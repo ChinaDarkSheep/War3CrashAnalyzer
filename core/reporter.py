@@ -8,6 +8,7 @@ import platform
 from tkinter import messagebox
 from core.auditor import Auditor
 from core.history import HistoryTracker
+from core.logtext import read_log
 
 class Reporter:
     def __init__(self, log_func, base_dir=None):
@@ -71,8 +72,7 @@ class Reporter:
             latest_log = os.path.join(error_dir, target_log_name)
             
             try:
-                with open(latest_log, 'r', encoding='gbk', errors='ignore') as f:
-                    log_content = f.read()
+                log_content = read_log(latest_log)
                 
                 content_hash = hashlib.md5(log_content.encode('utf-8')).hexdigest()
                 

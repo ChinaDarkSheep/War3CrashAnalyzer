@@ -9,8 +9,20 @@ import json
 import re
 import shutil
 import time
-from core.knowledge import CRASH_KNOWLEDGE, EXCEPTION_CODES
+from core.knowledge import (
+    EXCEPTION_CODES,
+    describe,
+    get_disputed,
+    lookup,
+    lookup_any_module,
+    normalize_offset,
+    normalize_version,
+)
 from core.constants import COMMON_DICT
+from core.logtext import detect_host, diagnose_plain, read_log
+from core.stack_parser import describe_stack, find_crash_frame, first_valid_frame, parse_stack_trace
+from core.environment import analyze_environment
+from core.diagnosis import build_conclusion
 from core.history import HistoryTracker
 from engine.memory import get_module_base
 from engine.dmp_parser import MinidumpParser
@@ -179,12 +191,49 @@ class Auditor:
             self.log("[*] 正在扫描模型路径长度有效性...")
             with open(map_file, 'rb') as f:
                 content = f.read()
-                # 寻找可能的 .mdx 或 .blp 路径
                 paths = re.findall(rb'[a-zA-Z0-9_\\]+\.(?:mdx|blp)', content)
                 for p in paths:
                     if len(p) > 160:
                         self.log(f"[!] 风险: 发现超长路径 ({len(p)} 字符): {p.decode(errors='ignore')}")
                         found_issues += 1
+
+            # 3. 比对脚本引用与实际提取到的资源
+            script_path = self._find_and_extract_jass_script(map_file, mpq_editor_path, temp_dir)
+            if not script_path:
+                self.log("[!] 未能提取脚本，跳过资源缺失比对。")
+            else:
+                with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    script = f.read()
+
+                refs = set()
+                for raw in re.findall(r'[A-Za-z0-9_\\/]+\.(?:mdx|mdl|blp|tga)', script, re.I):
+                    refs.add(raw.lower().replace('/', '\\').replace('\\\\', '\\'))
+
+                extracted_dir = os.path.join(base_dir, "extracted_" + os.path.basename(map_file).replace('.', '_'))
+                extracted = set()
+                if os.path.isdir(extracted_dir):
+                    for root, _, filenames in os.walk(extracted_dir):
+                        for name in filenames:
+                            rel = os.path.relpath(os.path.join(root, name), extracted_dir)
+                            extracted.add(rel.lower().replace('/', '\\'))
+
+                if not extracted:
+                    self.log(f"[*] 脚本中共引用 {len(refs)} 个模型/贴图路径。")
+                    self.log("[提示] 先执行“超级强力提取”，再次审计即可比对缺失文件。")
+                else:
+                    builtin_roots = ("replaceabletextures\\", "units\\", "abilities\\", "buildings\\",
+                                     "doodads\\", "environment\\", "ui\\")
+                    missing = sorted(p for p in refs
+                                     if p not in extracted and not p.startswith(builtin_roots))
+                    found_issues += len(missing)
+                    if missing:
+                        self.log(f"[!] 发现 {len(missing)} 个可能缺失的资源引用 (通常只影响视觉效果):")
+                        for p in missing[:10]:
+                            self.log(f"  - {p}")
+                        if len(missing) > 10:
+                            self.log(f"  ... 以及其他 {len(missing) - 10} 个")
+                    else:
+                        self.log("[+] 资源引用与提取文件一致，未发现缺失。")
             
             if found_issues == 0:
                 self.log(f"[+] 审计完成！未发现严重资源错误。")
@@ -220,19 +269,30 @@ class Auditor:
 
             self.log("[*] 正在扫描高危函数与同步风险...")
             
-            # 真实扫描逻辑
             issues = []
-            if "UnitRemoveAbility" in content and "'AHer'" in content:
+            if re.search(r"UnitRemoveAbility\s*\([^)]*['\"]AHer['\"]", content, re.I):
                 issues.append("发现致命错误: UnitRemoveAbility(..., 'AHer') 会导致魔兽崩溃！")
-            
+
+            high_risk_null = ["GroupEnumUnitsInRange", "RemoveLocation", "DestroyGroup", "UnitRemoveAbility"]
+            for fn in high_risk_null:
+                if re.search(rf'{fn}\s*\(\s*null', content, re.I):
+                    issues.append(f"发现 {fn}(null) 调用，部分游戏版本下会直接崩溃。")
+
+            if "UnitDamageTarget" in content:
+                self.log("[!] 发现 UnitDamageTarget 调用，请确认未在伤害事件回调中递归触发。")
+
             if "GetLocalPlayer" in content:
                 self.log("[提示] 脚本中包含 GetLocalPlayer，请确保块内无同步对象创建。")
             
-            # 统计泄露
             loc_created = content.count("Location(")
             loc_destroyed = content.count("RemoveLocation(")
             if loc_created > loc_destroyed:
                 issues.append(f"检测到潜在泄露: Location 创建 {loc_created} 次，仅销毁 {loc_destroyed} 次。")
+
+            if "DzFrameCreate" in content or "DzFrameRegister" in content:
+                self.log("[风险] 发现自定义 UI 帧操作，退出地图前需正确注销，否则可能导致退出崩溃。")
+            if "DzFrameSetScript" in content:
+                self.log("[提示] 发现 UI 脚本回调，若退出时崩溃请检查回调是否在退出后仍被触发。")
 
             for issue in issues:
                 self.log(f"[!] {issue}")
@@ -250,16 +310,22 @@ class Auditor:
             if finish_callback: finish_callback()
             self.log("="*70)
 
-    def get_analysis_data(self, log_content):
+    def analyze_log_content(self, log_content):
         """
-        Pure data analysis function without logging to UI
-        Returns: (addr, relative_offset, analysis_text, map_name, module_name)
+        解析单份崩溃日志，返回结构化诊断结果。
+        日志明文原因（内存不足/文件损坏）优先于模块偏移查表。
         """
         addr = "Unknown"
         relative_offset = None
         analysis_text = "无法从日志中提取有效崩溃地址"
         map_name = "Unknown"
         module_name = "Unknown"
+        plain = None
+        frames = []
+        environment = None
+        conclusion = None
+        matches = []
+        detail_text = ""
 
         try:
             # 1. 匹配地址和模块 (增强型)
@@ -293,39 +359,42 @@ class Auditor:
                             addr = m.group(1).upper()
                             break
             
-            # 尝试从 Stack Trace 中提取模块和相对偏移
-            clean_addr = addr.replace("0X", "")
-            if len(clean_addr) > 8: clean_addr = clean_addr[-8:] # 取后8位
-            
-            stack_pattern = rf'{clean_addr}\s+[0-9A-F]{{8}}\s+([0-9A-F]{{4}}):([0-9A-F]{{8}})\s+(.*)'
-            stack_match = re.search(stack_pattern, log_content, re.IGNORECASE)
-            
-            if stack_match:
-                section = stack_match.group(1)
-                inner_offset = stack_match.group(2)
-                # 转换 0001:XXXX 为 RVA (通常 +0x1000)
-                if section == "0001":
-                    try:
-                        rva = int(inner_offset, 16) + 0x1000
-                        relative_offset = "0x" + hex(rva)[2:].upper().zfill(8)
-                    except:
-                        relative_offset = "0x" + inner_offset.upper()
-                else:
-                    relative_offset = "0x" + inner_offset.upper()
-                    
-                full_mod_path = stack_match.group(3).strip()
-                module_name = os.path.basename(full_mod_path)
+            # 解析整段调用栈：既用于定位有效帧，也为后续环境/插件识别保留原始帧
+            clean_addr = addr.replace("0X", "")[-8:]
+            used_fallback_frame = False
+            frames = parse_stack_trace(log_content)
+            stack_summary = describe_stack(frames)
+
+            def _frame_offset(frame):
+                # 只有 .text（0001 节）的节内偏移加 0x1000 才是 RVA；
+                # 其他节需要读目标模块的 PE 节表才能换算，此处宁可不猜。
+                if frame["rva"] is None:
+                    return None
+                return normalize_offset("0x%08X" % frame["rva"])
+
+            crash_frame = find_crash_frame(frames, addr)
+            if crash_frame and crash_frame["module"].lower() not in ("<unknown>", "unknown", ""):
+                relative_offset = _frame_offset(crash_frame)
+                module_name = os.path.basename(crash_frame["module"])
             else:
+                # 崩溃地址无效（如空函数指针调用）时，改用调用栈中第一个有效模块帧
+                fallback = first_valid_frame(frames)
+                if fallback:
+                    relative_offset = _frame_offset(fallback)
+                    module_name = os.path.basename(fallback["module"])
+                    used_fallback_frame = addr != "Unknown"
+
+            if relative_offset is None and addr != "Unknown" and not used_fallback_frame:
                 # 降级方案：如果地址看起来像是一个相对偏移 (例如 < 0x05000000)
-                if addr != "Unknown":
-                    try:
-                        val = int(clean_addr, 16)
-                        if val < 0x05000000:
-                            relative_offset = "0x" + clean_addr.zfill(8)
-                            exe_match = re.search(r'Exe:\s+(.*)', log_content, re.IGNORECASE)
-                            if exe_match:
-                                module_name = os.path.basename(exe_match.group(1).strip())
-                    except: pass
+                try:
+                    val = int(clean_addr, 16)
+                    if 0 < val < 0x05000000:
+                        relative_offset = normalize_offset(clean_addr)
+                        exe_match = re.search(r'Exe:\s+(.*)', log_content, re.IGNORECASE)
+                        if exe_match:
+                            module_name = os.path.basename(exe_match.group(1).strip())
+                except ValueError:
+                    pass
 
             # 2. 提取地图名称 (增强型)
             # 寻找形如 Played Maps\Test\WorldEditTestMap.w3m 的行
@@ -338,11 +407,13 @@ class Auditor:
                 else:
                     map_name = full_name + "." + suffix
             
-            # 备选方案：寻找 File: war3map.w3a 等
+            # 备选方案：寻找 File: 字段；war3map.* 是地图内部数据文件，不能当作地图名
             if map_name == "Unknown":
                 file_match = re.search(r'File:\s+(.*\.(?:w3x|w3m|w3n|w3a|w3u|w3h|w3t|w3d|w3q))', log_content, re.IGNORECASE)
                 if file_match:
-                    map_name = os.path.basename(file_match.group(1).strip())
+                    candidate = os.path.basename(file_match.group(1).strip())
+                    if not candidate.lower().startswith("war3map."):
+                        map_name = candidate
 
             if map_name == "Unknown" or map_name.lower() in [".w3m", ".w3x"]:
                 alt_match = re.search(r'([^\\]+\.(?:w3x|w3m|w3n))', log_content, re.IGNORECASE)
@@ -351,61 +422,113 @@ class Auditor:
                     if "war3" not in alt_name.lower() and "exe" not in alt_name.lower() and "dll" not in alt_name.lower():
                         map_name = alt_name
 
-            # 3. 匹配知识库 (适配新结构)
-            search_target = relative_offset if relative_offset else (addr if addr.startswith("0X") else "0x" + addr)
-            search_target = search_target.upper().replace("0X", "0x") # 统一为 0xXXXX 格式
-            
-            found = False
-            # 优先匹配已知模块
-            target_modules = [module_name] if module_name != "Unknown" else ["Game.dll", "WorldEditKKWE.exe", "Storm.dll"]
-            
-            for mod_key in target_modules:
-                # 模糊匹配模块名 (忽略大小写)
-                matched_mod = None
-                for k in CRASH_KNOWLEDGE.keys():
-                    if k.lower() == mod_key.lower():
-                        matched_mod = k
-                        break
-                
-                if matched_mod:
-                    mod_data = CRASH_KNOWLEDGE[matched_mod]
-                    for ver, ver_data in mod_data.items():
-                        if search_target in ver_data['offsets']:
-                            analysis_text = f"[{matched_mod} ({ver})] {ver_data['offsets'][search_target]}"
-                            found = True
-                            break
-                    if found: break
-            
-            # 增强匹配：如果还是没找到，尝试后缀匹配 (针对 Game.dll 的 ASLR/多版本情况)
-            if not found:
-                # 只针对 Game.dll 的高频偏移量进行后缀匹配 (后 5 位)
-                suffix = search_target[-5:] if len(search_target) >= 5 else None
-                if suffix:
-                    game_data = CRASH_KNOWLEDGE.get("Game.dll", {})
-                    for ver, ver_data in game_data.items():
-                        for off, desc in ver_data['offsets'].items():
-                            if off.endswith(suffix):
-                                analysis_text = f"[Game.dll ({ver}) 疑似匹配] {desc}"
-                                found = True
-                                break
-                        if found: break
+            # 3. 日志明文原因
+            plain = diagnose_plain(log_content)
 
-            if not found:
-                # 如果没找到，但在其他模块中找到了相同的偏移量，也提示一下
-                for mod_key, mod_data in CRASH_KNOWLEDGE.items():
-                    for ver, ver_data in mod_data.items():
-                        if search_target in ver_data['offsets']:
-                            analysis_text = f"[{mod_key} ({ver})] {ver_data['offsets'][search_target]}"
-                            found = True
-                            break
-                    if found: break
+            # 识别运行环境（平台插件 / 编辑器运行时 / 显卡驱动），用于责任归属；
+            # 明文已明确指向地图文件损坏时，不让环境提示改口。
+            exe_match = re.search(r"^(?:Exe|Program):\s*(.+)$", log_content, re.M | re.I)
+            log_exe = exe_match.group(1).strip() if exe_match else None
+            environment = analyze_environment(
+                log_content, frames=frames, focus_module=module_name, exe=log_exe,
+                allow_hint=not (plain and plain.get("attribution") == "地图"))
 
-            if not found and addr != "Unknown":
-                analysis_text = f"未知偏移量 ({search_target})，可能发生在 {module_name}"
+            if plain and plain["host"] == "editor":
+                # 编辑器崩溃的 Storm.dll 偏移没有诊断价值，直接用统一结论
+                conclusion = build_conclusion(
+                    plain=plain, environment=environment, matches=None,
+                    module_name=plain["exe"] or module_name, rva=None, addr=addr,
+                    log_version=None, used_fallback=False, host="editor")
+                analysis_text = conclusion["text"]
+                if environment and environment["text"]:
+                    analysis_text += "\n" + environment["text"]
+                return {
+                    "addr": addr,
+                    "relative_offset": None,
+                    "analysis_text": analysis_text,
+                    "detail_text": (environment or {}).get("text") or "",
+                    "map_name": map_name,
+                    "module_name": plain["exe"] or module_name,
+                    "reason": plain,
+                    "stack": frames,
+                    "environment": environment,
+                    "conclusion": conclusion,
+                }
+
+            # 4. 匹配知识库：版本 + 精确 RVA，不做任何后缀/跨版本模糊匹配
+            build_match = re.search(r'War3Build:\s*([0-9.]+)', log_content, re.IGNORECASE)
+            log_version = normalize_version(build_match.group(1)) if build_match else None
+            rva = normalize_offset(relative_offset)
+            lookup_text = ""
+
+            if rva:
+                if module_name != "Unknown":
+                    matches = [(module_name, ver, entry)
+                               for ver, entry in lookup(module_name, log_version, rva)]
+                else:
+                    matches = lookup_any_module(log_version, rva)
+
+                frame_note = ""
+                if used_fallback_frame:
+                    frame_note = ("崩溃指令地址无效（可能为空函数指针调用），"
+                                  f"已改为分析调用栈首个有效帧 {module_name}+{rva}。")
+                    if stack_summary:
+                        frame_note += f"调用栈：{stack_summary}。"
+                if matches:
+                    lookup_text = " | ".join(
+                        f"[{mod}] {describe(entry, ver, log_version is not None)}"
+                        for mod, ver, entry in matches
+                    )
+                    disputed = get_disputed(matches[0][0], matches[0][1], rva)
+                    if len(disputed) > 1:
+                        others = "；".join(f"{d['source']}：{d['desc']}" for d in disputed[1:])
+                        lookup_text += f"\n    注意：该地址另有不同说法 → {others}"
+                    lookup_text = frame_note + lookup_text
+                elif log_version:
+                    lookup_text = frame_note + (f"该版本（{log_version}）知识库未收录偏移 {rva}，"
+                                                f"崩溃模块：{module_name}")
+                else:
+                    lookup_text = frame_note + (f"未知偏移量 ({rva})，日志中未找到游戏版本，"
+                                                f"崩溃模块：{module_name}")
+            elif addr != "Unknown":
+                lookup_text = f"日志中的地址 {addr} 不是模块内偏移，无法查表，崩溃模块：{module_name}"
+
+            # 5. 统一结论：一句话结论 + 责任归属 + 建议 + 置信度
+            conclusion = build_conclusion(
+                plain=plain, environment=environment, matches=matches,
+                module_name=module_name, rva=rva, addr=addr,
+                log_version=log_version, used_fallback=used_fallback_frame,
+                host=detect_host(log_content)[0])
+
+            details = []
+            if lookup_text and (matches or "知识库未收录" in lookup_text or not plain):
+                details.append(lookup_text)
+            if environment and environment["text"]:
+                details.append(environment["text"])
+
+            detail_text = "\n".join(details)
+            analysis_text = conclusion["text"]
+            if detail_text:
+                analysis_text += "\n" + detail_text
         except Exception as e:
             analysis_text = f"分析过程异常: {str(e)}"
             
-        return addr, relative_offset, analysis_text, map_name, module_name
+        return {
+            "addr": addr,
+            "relative_offset": relative_offset,
+            "analysis_text": analysis_text,
+            "detail_text": detail_text,
+            "map_name": map_name,
+            "module_name": module_name,
+            "reason": plain,
+            "stack": frames,
+            "environment": environment,
+            "conclusion": conclusion,
+        }
+
+    def get_analysis_data(self, log_content):
+        r = self.analyze_log_content(log_content)
+        return (r["addr"], r["relative_offset"], r["analysis_text"], r["map_name"], r["module_name"])
 
     def analyze_last_crash(self, war3_path):
         if not war3_path or not os.path.exists(war3_path):
@@ -487,15 +610,21 @@ class Auditor:
                                 self.log(f"    解释: {explanation}")
                                 self.log(f"[+] Dump 崩溃地址: {addr}")
                                 
-                                # 定位崩溃模块
+                                # 定位崩溃模块，并用 dmp 内的文件版本查知识库
                                 crash_mod = "Unknown"
                                 target_addr = int(addr, 16)
                                 for mod in parser.modules:
                                     if mod['base'] <= target_addr < (mod['base'] + mod['size']):
                                         crash_mod = mod['name']
-                                        offset = hex(target_addr - mod['base']).upper()
-                                        self.log(f"[+] 崩溃发生于模块: {crash_mod} (相对偏移: {offset})")
+                                        mod_version = normalize_version(mod.get('file_version'))
+                                        offset = normalize_offset(hex(target_addr - mod['base']))
+                                        self.log(f"[+] 崩溃发生于模块: {crash_mod} "
+                                                 f"(相对偏移: {offset}, 文件版本: {mod.get('file_version') or '未知'})")
                                         analysis_summary += f"[{crash_mod}+{offset}] "
+                                        for ver, entry in lookup(crash_mod, mod_version, offset):
+                                            hit = describe(entry, ver, mod_version is not None)
+                                            self.log(f"[+] 命中知识库: {hit}")
+                                            analysis_summary += hit + " "
                                         break
                             
                             # 提取 war3map 相关字符串
@@ -508,10 +637,15 @@ class Auditor:
                         self.log(f"[-] Dump 分析异常: {de}")
                 
                 # 2. 传统文本日志分析 (逻辑降级/互补)
-                with open(latest_log, 'r', encoding='gbk', errors='ignore') as f:
-                    content = f.read()
-                
-                addr, relative_offset, analysis, log_map_name, log_mod_name = self.get_analysis_data(content)
+                content = read_log(latest_log)
+                result = self.analyze_log_content(content)
+                addr = result["addr"]
+                relative_offset = result["relative_offset"]
+                analysis = result["analysis_text"]
+                log_map_name = result["map_name"]
+                log_mod_name = result["module_name"]
+                conc = result.get("conclusion")
+                detail_text = result.get("detail_text") or ""
                 
                 if log_map_name != "Unknown":
                     self.log(f"[+] 从日志提取到地图: {log_map_name}")
@@ -519,22 +653,31 @@ class Auditor:
                 if log_mod_name != "Unknown" and not dmp_analysis_success:
                     self.log(f"[+] 从日志定位到模块: {log_mod_name}")
 
-                if addr != "Unknown":
-                    if not dmp_analysis_success:
-                        self.log(f"[+] 捕获到原始崩溃地址: {addr}")
-                        if relative_offset:
-                            self.log(f"[+] 成功还原相对偏移量: {relative_offset}")
-                    
-                    if "未知偏移量" not in analysis and "无法从日志" not in analysis:
-                        self.log(f"\n[!!!] 匹配到已知崩溃知识库内容:")
-                        self.log(f"      {analysis}")
-                        analysis_summary += analysis
-                    else:
-                        if not dmp_analysis_success:
-                            self.log(f"\n[?] {analysis}")
-                else:
-                    if not dmp_analysis_success:
-                        self.log("[-] 日志中未找到明确的崩溃偏移量。")
+                if addr != "Unknown" and not dmp_analysis_success:
+                    self.log(f"[+] 捕获到原始崩溃地址: {addr}")
+                    if relative_offset:
+                        self.log(f"[+] 成功还原相对偏移量: {relative_offset}")
+
+                show_conclusion = bool(conc) and (
+                    not dmp_analysis_success or conc["attribution"] != "暂无法确定")
+                if show_conclusion:
+                    self.log("")
+                    for line in conc["text"].splitlines():
+                        self.log("  " + line)
+                    self.update_status(
+                        f"诊断：{conc['attribution']} · 置信度 {int(conc['confidence'] * 100)}%")
+                    analysis_summary = (analysis_summary + "\n" + analysis
+                                        if analysis_summary else analysis)
+                elif conc is None:
+                    self.log(f"[-] {analysis}")
+                    analysis_summary = analysis
+
+                if detail_text:
+                    self.log("[!] 补充依据：")
+                    self.log(f"      {detail_text}")
+                    if not show_conclusion:
+                        analysis_summary = (analysis_summary + "\n" + detail_text
+                                            if analysis_summary else detail_text)
                 
                 # 记录到历史库
                 if self.history:
