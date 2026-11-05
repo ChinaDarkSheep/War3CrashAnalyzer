@@ -63,7 +63,7 @@ class LocalTab(BaseTab):
         self.agent_tree.heading("count", text="活动数量 (Count)")
         self.agent_tree.heading("cls", text="引擎类名 (Class)")
         self.agent_tree.column("name", width=160)
-        self.agent_tree.column("count", width=80)
+        self.agent_tree.column("count", width=110)
         self.agent_tree.column("cls", width=140)
         self.agent_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.agent_tree.bind('<<TreeviewSelect>>', self.on_agent_select)
@@ -168,8 +168,10 @@ class LocalTab(BaseTab):
 
             if self.vm_monitor.GAME_WAR3:
                 self.app.root.after(0, self.log_local,
+                                    f"[*] Game.dll 基址: {hex(game_base)}")
+                self.app.root.after(0, self.log_local,
                                     f"[*] CGameWar3: {hex(self.vm_monitor.GAME_WAR3)}"
-                                    f" (RVA {hex(self.vm_monitor.GAME_WAR3 - game_base)})")
+                                    f" (来自锚点 Game.dll+{hex(self.vm_monitor.GAME_WAR3_RVA)})")
                 self.app.root.after(0, self.log_local,
                                     f"[*] CGameState: {hex(self.vm_monitor.GAME_STATE)}")
             else:

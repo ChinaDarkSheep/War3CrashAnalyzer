@@ -3,7 +3,7 @@
     "map_path": "C:/Users/Administrator/Downloads/80258_30minEX30Beta43.w3x",
     "first_run": false,
     "allow_plugin": true,
-    "allow_report": true,
+    "allow_report": false,
     "report_interval": 30,
     "boot_start": false,
     "min_to_tray": true
