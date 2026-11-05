@@ -64,6 +64,10 @@
         .chart-container { position: relative; height: 220px; margin-top: 15px; }
         .trend-fallback { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding: 8px 0; margin-top: 6px; }
         .trend-bar { flex: 1; background: #3498db; border-radius: 2px 2px 0 0; min-height: 2px; }
+        .annotation-box { margin-top: 18px; padding: 15px; border: 1px solid #e6ecf0; border-radius: 8px; background: #fbfcfd; }
+        .annotation-box h3 { margin-top: 0; }
+        .annotation-box textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #dfe6e9; border-radius: 6px; font-family: inherit; font-size: 0.95em; resize: vertical; }
+        .annotation-box select, .annotation-box input[type="text"], .annotation-box input[type="password"], .annotation-box input[type="number"] { padding: 8px 10px; border: 1px solid #dfe6e9; border-radius: 6px; font-size: 0.9em; }
         .stack { font-family: Consolas, monospace; font-size: 0.82em; color: #555; background: #f8f9fa; padding: 8px; border-radius: 6px; margin-top: 6px; white-space: pre-wrap; }
         details summary { cursor: pointer; color: var(--primary); font-size: 0.85em; margin-top: 6px; }
         .empty { text-align: center; color: #999; padding: 20px; }
@@ -116,6 +120,27 @@
         <div class="card" id="detail-card" hidden>
             <h2>🔬 指纹详情 <span id="detail-signature"></span></h2>
             <div id="detail-meta" class="meta-grid"></div>
+
+            <div class="annotation-box">
+                <h3>📝 作者标注</h3>
+                <p id="annotation-current" class="muted">尚未标注。</p>
+                <textarea id="annotation-text" rows="3" maxlength="2000" placeholder="补充根因，例如：GroupEnumUnitsInRange 遍历时单位被移除导致空指针"></textarea>
+                <div class="query-row">
+                    <select id="annotation-source">
+                        <option value="作者确认">作者确认</option>
+                        <option value="维护者确认">维护者确认</option>
+                        <option value="社区反馈">社区反馈</option>
+                    </select>
+                    <label>置信度
+                        <input type="number" id="annotation-confidence" min="0" max="100" step="5" value="80" style="width: 75px;"> %
+                    </label>
+                    <input type="text" id="annotator-input" placeholder="标注人（可选）">
+                    <input type="password" id="annotation-token" placeholder="标注令牌">
+                    <button id="annotation-save">保存标注</button>
+                </div>
+                <p id="annotation-status" class="muted"></p>
+            </div>
+
             <h3>最近 30 天出现次数</h3>
             <div class="chart-container" id="trend-canvas-box">
                 <canvas id="detail-trend-chart"></canvas>
@@ -141,6 +166,7 @@
     <script>
         let detailChart = null;
         let lastQuery = null;
+        let currentSignature = null;
 
         function esc(value) {
             return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -187,6 +213,7 @@
             setBusy(true);
             setStatus('正在查询...', false);
             document.getElementById('detail-card').hidden = true;
+            currentSignature = null;
             lastQuery = { hash, name };
 
             try {
@@ -240,6 +267,7 @@
         async function loadDetail(signature) {
             const card = document.getElementById('detail-card');
             card.hidden = false;
+            currentSignature = signature;
             card.scrollIntoView({ behavior: 'smooth', block: 'start' });
             document.getElementById('detail-signature').textContent = signature;
             document.getElementById('detail-meta').innerHTML = '<div class="muted">正在加载...</div>';
@@ -331,6 +359,24 @@
                 metaItem('作者标注', agg.annotation || '尚未标注')
             ].join('');
 
+            const confidencePercent = typeof agg.annotation_confidence === 'number'
+                ? Math.round(agg.annotation_confidence * 100) : 80;
+            document.getElementById('annotation-text').value = agg.annotation || '';
+            document.getElementById('annotation-source').value = agg.annotation_source || '作者确认';
+            document.getElementById('annotation-confidence').value = confidencePercent;
+            document.getElementById('annotator-input').value = agg.annotator || '';
+            const current = document.getElementById('annotation-current');
+            if (agg.annotation) {
+                current.textContent = `${agg.annotation}（${agg.annotation_source || '来源未填'} · 置信度 ${confidencePercent}%` +
+                    (agg.annotator ? ` · ${agg.annotator}` : '') +
+                    (agg.annotated_at ? ` · ${agg.annotated_at}` : '') + '）';
+            } else {
+                current.textContent = '尚未标注。补充根因后会写入服务端案例缓存。';
+            }
+            const annotationStatus = document.getElementById('annotation-status');
+            annotationStatus.textContent = '';
+            annotationStatus.style.color = '';
+
             const trend = data.trend || [];
             renderTrend(trend);
 
@@ -393,6 +439,58 @@
         });
         document.getElementById('map-hash-input').addEventListener('keydown', event => {
             if (event.key === 'Enter') query();
+        });
+
+        document.getElementById('annotation-save').addEventListener('click', async () => {
+            if (!currentSignature) return;
+            const cause = document.getElementById('annotation-text').value.trim();
+            const source = document.getElementById('annotation-source').value;
+            const confidencePercent = Number(document.getElementById('annotation-confidence').value);
+            const annotator = document.getElementById('annotator-input').value.trim();
+            const token = document.getElementById('annotation-token').value.trim();
+            const status = document.getElementById('annotation-status');
+            const button = document.getElementById('annotation-save');
+            const fail = message => {
+                status.textContent = message;
+                status.style.color = '#e74c3c';
+            };
+
+            if (!cause) return fail('请填写根因后再保存。');
+            if (!Number.isFinite(confidencePercent) || confidencePercent < 0 || confidencePercent > 100) {
+                return fail('置信度需在 0~100 之间。');
+            }
+            if (!token) return fail('请输入标注令牌。');
+
+            button.disabled = true;
+            status.textContent = '正在保存...';
+            status.style.color = '#888';
+            try {
+                const res = await fetch(`/api/aggregate/${encodeURIComponent(currentSignature)}/annotation`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Annotation-Token': token
+                    },
+                    body: JSON.stringify({
+                        annotation: cause,
+                        source: source,
+                        confidence: confidencePercent / 100,
+                        annotator: annotator || null
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+                const row = document.querySelector(`#ranking-body tr[data-signature="${currentSignature}"]`);
+                if (row) row.lastElementChild.textContent = cause;
+                await loadDetail(currentSignature);
+                status.textContent = '标注已保存，并写入案例缓存。';
+                status.style.color = '#2ecc71';
+            } catch (e) {
+                status.textContent = `保存失败：${e.message}`;
+                status.style.color = '#e74c3c';
+            } finally {
+                button.disabled = false;
+            }
         });
 
         fetch('/api/stats')

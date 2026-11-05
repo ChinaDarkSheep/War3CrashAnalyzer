@@ -59,6 +59,28 @@
 
 详情接口：`GET /api/aggregate/<signature>`，`signature` 为 12 位十六进制；不存在或格式错误返回 404。
 
+## 作者标注与案例缓存（P2.4）
+作者可在指纹详情中填写根因、来源（作者确认 / 维护者确认 / 社区反馈）、置信度与标注人。标注写入聚合表，并同步到 `knowledge_cases` 案例缓存。
+
+**写入需要令牌**：启动服务前设置环境变量，未设置时标注接口返回 503（功能禁用）：
+
+```bash
+# Linux / macOS
+export WAR3_ANNOTATION_TOKEN='请换成足够长的随机字符串'
+python server/app.py
+
+# Windows PowerShell
+$env:WAR3_ANNOTATION_TOKEN='请换成足够长的随机字符串'
+python server/app.py
+```
+
+作者页填写同一令牌后提交，请求通过 `X-Annotation-Token` 头发送；令牌错误返回 403。建议服务部署在 HTTPS 之后，避免令牌明文传输。
+
+- `POST /api/aggregate/<signature>/annotation`：JSON 体 `{"annotation": "根因", "source": "作者确认", "confidence": 0.9, "annotator": "可选"}`，`confidence` 为 0~1。
+- `GET /api/knowledge/cases?map_hash=<md5>&map=<地图名>&fingerprint=<指纹>&limit=50`：查看案例缓存。
+- 案例缓存只作为候选，不自动写入全局 `knowledge.json`；由维护者复核后合并，避免单张地图的个案污染全局偏移结论。
+- 全量重建聚合表时会保留标注内容、来源、置信度、标注人与时间。
+
 ## 快速启动
 1. 确保已安装 Python 环境。
 2. 安装依赖：
@@ -74,8 +96,10 @@
 
 ## 目录结构
 - `app.py`: Flask 主程序及 API 接口（默认监听 2234 端口）。
-- `crash_data.db`: SQLite 数据库（自动生成）。
-- `static/index.html`: 前端数据展示界面。
+- `crash_data.db`: SQLite 数据库（自动生成，含聚合与案例缓存）。
+- `static/index.html`: 总览仪表盘。
+- `static/author.html`: 作者查询与标注页。
+- `static/md5.js`: 浏览器本地地图 MD5 计算。
 
 ## 客户端集成
 客户端上报逻辑位于 `core/reporter.py`，上报地址为 `http://43.163.75.93:2234/api/report`（另含域名地址回退）。

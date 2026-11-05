@@ -3,6 +3,7 @@ import sqlite3
 import json
 import time
 import hashlib
+import hmac
 import re
 from flask import Flask, request, jsonify, send_from_directory
 from datetime import datetime, timedelta
@@ -120,6 +121,38 @@ def init_db():
               "ON crash_reports(map_hash, fingerprint)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_reports_fingerprint "
               "ON crash_reports(fingerprint)")
+
+    # P2.4 作者标注：根因 + 来源 / 置信度 / 标注人
+    c.execute("PRAGMA table_info(crash_aggregates)")
+    aggregate_columns = [row[1] for row in c.fetchall()]
+    annotation_columns = {
+        'annotation_source': 'TEXT',
+        'annotation_confidence': 'REAL',
+        'annotator': 'TEXT',
+        'annotated_at': 'DATETIME',
+    }
+    for name, decl in annotation_columns.items():
+        if name not in aggregate_columns:
+            print(f"[*] 正在为聚合表添加 {name} 列...")
+            c.execute(f"ALTER TABLE crash_aggregates ADD COLUMN {name} {decl}")
+
+    # 案例缓存：作者标注按签名沉淀，供维护者合并进全局知识库
+    c.execute('''CREATE TABLE IF NOT EXISTS knowledge_cases
+                 (signature TEXT PRIMARY KEY,
+                  map_hash TEXT,
+                  map_name TEXT,
+                  fingerprint TEXT NOT NULL,
+                  game_version TEXT,
+                  module TEXT,
+                  relative_offset TEXT,
+                  cause TEXT NOT NULL,
+                  source TEXT,
+                  confidence REAL,
+                  annotator TEXT,
+                  occurrence INTEGER,
+                  first_seen DATETIME,
+                  last_seen DATETIME,
+                  updated_at DATETIME)''')
 
     conn.commit()
     conn.close()
@@ -253,6 +286,26 @@ def _aggregate_identity(aggregate):
         aggregate["fingerprint"], name.strip().lower()]
 
 
+ANNOTATION_SOURCES = {"作者确认", "维护者确认", "社区反馈"}
+
+
+def _annotation_denied():
+    """标注写入需要服务端配置的令牌；未配置时整体禁用，避免公开写接口。"""
+    expected = os.environ.get("WAR3_ANNOTATION_TOKEN", "").strip()
+    if not expected:
+        return jsonify({
+            "error": "annotation disabled",
+            "message": "服务端未设置 WAR3_ANNOTATION_TOKEN，作者标注已禁用",
+        }), 503
+    provided = (request.headers.get("X-Annotation-Token") or "").strip()
+    if not hmac.compare_digest(provided, expected):
+        return jsonify({
+            "error": "forbidden",
+            "message": "标注令牌无效",
+        }), 403
+    return None
+
+
 def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
                       game_version, module, relative_offset, attribution,
                       timestamp):
@@ -290,9 +343,11 @@ def rebuild_aggregates(conn=None):
     conn.row_factory = sqlite3.Row
     try:
         annotations = {
-            row["signature"]: row["annotation"]
+            row["signature"]: dict(row)
             for row in conn.execute(
-                "SELECT signature, annotation FROM crash_aggregates "
+                "SELECT signature, annotation, annotation_source, "
+                "annotation_confidence, annotator, annotated_at "
+                "FROM crash_aggregates "
                 "WHERE annotation IS NOT NULL AND annotation <> ''")
         }
         conn.execute("DELETE FROM crash_aggregates")
@@ -335,18 +390,24 @@ def rebuild_aggregates(conn=None):
             entry["last_report_id"] = row["id"]
 
         for entry in aggregates.values():
+            annotation = annotations.get(entry["signature"], {})
             conn.execute('''INSERT INTO crash_aggregates
                             (signature, map_key, map_hash, map_name, fingerprint,
                              game_version, module, relative_offset, attribution,
-                             occurrence, annotation, first_seen, last_seen,
-                             last_report_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                             occurrence, annotation, annotation_source,
+                             annotation_confidence, annotator, annotated_at,
+                             first_seen, last_seen, last_report_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                          (entry["signature"], entry["map_key"], entry["map_hash"],
                           entry["map_name"], entry["fingerprint"],
                           entry["game_version"], entry["module"],
                           entry["relative_offset"], entry["attribution"],
                           entry["occurrence"],
-                          annotations.get(entry["signature"]),
+                          annotation.get("annotation"),
+                          annotation.get("annotation_source"),
+                          annotation.get("annotation_confidence"),
+                          annotation.get("annotator"),
+                          annotation.get("annotated_at"),
                           entry["first_seen"], entry["last_seen"],
                           entry["last_report_id"]))
         if own_conn:
@@ -707,7 +768,8 @@ def get_aggregate_detail(signature):
     c = conn.cursor()
     c.execute("SELECT signature, map_key, map_hash, map_name, fingerprint, "
               "game_version, module, relative_offset, attribution, occurrence, "
-              "annotation, first_seen, last_seen, last_report_id "
+              "annotation, annotation_source, annotation_confidence, annotator, "
+              "annotated_at, first_seen, last_seen, last_report_id "
               "FROM crash_aggregates WHERE signature = ?", (signature,))
     row = c.fetchone()
     if row is None:
@@ -749,6 +811,125 @@ def get_aggregate_detail(signature):
         "samples": samples,
         "sample_total": sample_total,
     })
+
+
+@app.route('/api/aggregate/<signature>/annotation', methods=['POST'])
+def save_annotation(signature):
+    """作者回填根因；需服务端配置 WAR3_ANNOTATION_TOKEN 并通过请求头携带。"""
+    signature = (signature or '').strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{12}", signature):
+        return jsonify({"error": "invalid signature"}), 404
+    denied = _annotation_denied()
+    if denied:
+        return denied
+
+    data = request.json or {}
+    cause = _text(data.get('annotation'), 2000)
+    if not cause:
+        return jsonify({"error": "annotation required",
+                        "message": "标注内容不能为空"}), 400
+    source = _text(data.get('source'), 40)
+    if source not in ANNOTATION_SOURCES:
+        return jsonify({"error": "invalid source",
+                        "message": "标注来源无效"}), 400
+    try:
+        confidence = float(data.get('confidence'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid confidence",
+                        "message": "置信度需为 0~1"}), 400
+    if not 0 <= confidence <= 1:
+        return jsonify({"error": "invalid confidence",
+                        "message": "置信度需为 0~1"}), 400
+    annotator = _text(data.get('annotator'), 80)
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT signature, map_hash, map_name, fingerprint, game_version, "
+              "module, relative_offset, occurrence, first_seen, last_seen "
+              "FROM crash_aggregates WHERE signature = ?", (signature,))
+    row = c.fetchone()
+    if row is None:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+
+    c.execute('''UPDATE crash_aggregates SET
+                 annotation = ?, annotation_source = ?, annotation_confidence = ?,
+                 annotator = ?, annotated_at = ?
+                 WHERE signature = ?''',
+              (cause, source, confidence, annotator, now, signature))
+    c.execute('''INSERT INTO knowledge_cases
+                 (signature, map_hash, map_name, fingerprint, game_version,
+                  module, relative_offset, cause, source, confidence, annotator,
+                  occurrence, first_seen, last_seen, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(signature) DO UPDATE SET
+                  cause = excluded.cause,
+                  source = excluded.source,
+                  confidence = excluded.confidence,
+                  annotator = excluded.annotator,
+                  occurrence = excluded.occurrence,
+                  first_seen = COALESCE(knowledge_cases.first_seen, excluded.first_seen),
+                  last_seen = excluded.last_seen,
+                  updated_at = excluded.updated_at''',
+              (signature, row["map_hash"], row["map_name"], row["fingerprint"],
+               row["game_version"], row["module"], row["relative_offset"],
+               cause, source, confidence, annotator, row["occurrence"],
+               row["first_seen"], row["last_seen"], now))
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "status": "success",
+        "signature": signature,
+        "annotation": cause,
+        "source": source,
+        "confidence": confidence,
+        "annotator": annotator,
+        "annotated_at": now,
+    })
+
+
+@app.route('/api/knowledge/cases', methods=['GET'])
+def get_knowledge_cases():
+    """作者标注沉淀的案例缓存，供维护者筛选后合并进全局知识库。"""
+    raw_hash = (request.args.get('map_hash') or '').strip()
+    map_hash = _map_hash(raw_hash) if raw_hash else None
+    if raw_hash and not map_hash:
+        return jsonify({"total": 0, "cases": []})
+    map_name = (request.args.get('map') or '').strip()
+    fingerprint = _fingerprint(request.args.get('fingerprint'))
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 50))))
+    except (TypeError, ValueError):
+        limit = 50
+
+    where_clauses = []
+    params = []
+    if map_hash:
+        where_clauses.append("lower(map_hash) = ?")
+        params.append(map_hash)
+    if map_name:
+        where_clauses.append("map_name = ?")
+        params.append(map_name)
+    if fingerprint:
+        where_clauses.append("fingerprint = ?")
+        params.append(fingerprint)
+    where_clause = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM knowledge_cases{where_clause}", params)
+    total = c.fetchone()[0]
+    c.execute(f"SELECT signature, map_hash, map_name, fingerprint, game_version, "
+              f"module, relative_offset, cause, source, confidence, annotator, "
+              f"occurrence, first_seen, last_seen, updated_at "
+              f"FROM knowledge_cases{where_clause} "
+              f"ORDER BY updated_at DESC LIMIT ?", params + [limit])
+    cases = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return jsonify({"total": total, "cases": cases})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=2234, debug=True)
