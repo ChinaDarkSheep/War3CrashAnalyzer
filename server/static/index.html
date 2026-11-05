@@ -48,6 +48,12 @@
         
         #total-count { font-size: 3rem; margin: 10px 0; color: var(--success); }
         .chart-container { position: relative; height: 250px; }
+        .nav-link {
+            display: inline-block; margin-top: 12px; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
     </style>
 </head>
 <body>
@@ -61,6 +67,7 @@
                 </select>
                 <input type="text" id="search-input" placeholder="🔍 搜索地图、地址或原因..." oninput="fetchData()">
             </div>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询 →</a>
         </header>
 
         <div class="stats-grid">
@@ -162,59 +169,65 @@
                 }
 
                 // Map Chart (Pie)
-                if (mapChart) mapChart.destroy();
-                mapChart = new Chart(document.getElementById('mapChart'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: stats.top_maps.map(m => m.map_name),
-                        datasets: [{
-                            data: stats.top_maps.map(m => m.count),
-                            backgroundColor: ['#3498db', '#e74c3c', '#f1c40f', '#2ecc71', '#9b59b6']
-                        }]
-                    },
-                    options: { maintainAspectRatio: false }
-                });
+                if (window.Chart) {
+                    if (mapChart) mapChart.destroy();
+                    mapChart = new Chart(document.getElementById('mapChart'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: stats.top_maps.map(m => m.map_name),
+                            datasets: [{
+                                data: stats.top_maps.map(m => m.count),
+                                backgroundColor: ['#3498db', '#e74c3c', '#f1c40f', '#2ecc71', '#9b59b6']
+                            }]
+                        },
+                        options: { maintainAspectRatio: false }
+                    });
+                }
 
                 // Reason Chart (Horizontal Bar)
-                if (reasonChart) reasonChart.destroy();
-                reasonChart = new Chart(document.getElementById('reasonChart'), {
-                    type: 'bar',
-                    data: {
-                        labels: stats.top_reasons.map(r => r.reason.substring(0, 15) + '...'),
-                        datasets: [{
-                            label: '样本数',
-                            data: stats.top_reasons.map(r => r.count),
-                            backgroundColor: '#34495e'
-                        }]
-                    },
-                    options: { 
-                        indexAxis: 'y',
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } }
-                    }
-                });
+                if (window.Chart) {
+                    if (reasonChart) reasonChart.destroy();
+                    reasonChart = new Chart(document.getElementById('reasonChart'), {
+                        type: 'bar',
+                        data: {
+                            labels: stats.top_reasons.map(r => r.reason.substring(0, 15) + '...'),
+                            datasets: [{
+                                label: '样本数',
+                                data: stats.top_reasons.map(r => r.count),
+                                backgroundColor: '#34495e'
+                            }]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                }
 
                 // Trend Chart (Line)
-                if (trendChart) trendChart.destroy();
-                trendChart = new Chart(document.getElementById('trendChart'), {
-                    type: 'line',
-                    data: {
-                        labels: stats.trends.map(t => t.day),
-                        datasets: [{
-                            label: '日上报量',
-                            data: stats.trends.map(t => t.count),
-                            borderColor: '#2ecc71',
-                            tension: 0.3,
-                            fill: true,
-                            backgroundColor: 'rgba(46, 204, 113, 0.1)'
-                        }]
-                    },
-                    options: { 
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-                    }
-                });
+                if (window.Chart) {
+                    if (trendChart) trendChart.destroy();
+                    trendChart = new Chart(document.getElementById('trendChart'), {
+                        type: 'line',
+                        data: {
+                            labels: stats.trends.map(t => t.day),
+                            datasets: [{
+                                label: '日上报量',
+                                data: stats.trends.map(t => t.count),
+                                borderColor: '#2ecc71',
+                                tension: 0.3,
+                                fill: true,
+                                backgroundColor: 'rgba(46, 204, 113, 0.1)'
+                            }]
+                        },
+                        options: {
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                        }
+                    });
+                }
 
                 // Aggregated fingerprints (P2.2)
                 const aggBody = document.getElementById('agg-body');

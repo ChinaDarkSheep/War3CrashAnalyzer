@@ -5,7 +5,7 @@ import time
 import hashlib
 import re
 from flask import Flask, request, jsonify, send_from_directory
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__, static_folder='static')
 DB_PATH = os.path.join(os.path.dirname(__file__), 'crash_data.db')
@@ -175,6 +175,15 @@ def _json_text(value, limit=4000):
         return None
 
 
+def _parse_json(text):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def _frame_list(values, limit=10):
     if not isinstance(values, list):
         return None
@@ -233,6 +242,17 @@ def _aggregate_signature(map_key, fingerprint):
     return hashlib.sha1(material.encode("utf-8")).hexdigest()[:12].upper()
 
 
+def _aggregate_identity(aggregate):
+    """返回定位该聚合样本的 SQL 条件：有哈希按哈希，否则按小写地图名。"""
+    if aggregate["map_hash"]:
+        return "fingerprint = ? AND lower(map_hash) = ?", [
+            aggregate["fingerprint"], aggregate["map_hash"]]
+    key = aggregate["map_key"] or ""
+    name = key[5:] if key.startswith("name:") else (aggregate["map_name"] or "")
+    return "fingerprint = ? AND lower(trim(map_name)) = ?", [
+        aggregate["fingerprint"], name.strip().lower()]
+
+
 def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
                       game_version, module, relative_offset, attribution,
                       timestamp):
@@ -241,6 +261,7 @@ def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
     fp = (fingerprint or "").strip().upper()
     if not key or not fp:
         return
+    map_hash = map_hash.lower() if map_hash else None
     signature = _aggregate_signature(key, fp)
     c.execute('''INSERT INTO crash_aggregates
                  (signature, map_key, map_hash, map_name, fingerprint,
@@ -293,7 +314,7 @@ def rebuild_aggregates(conn=None):
                 entry = {
                     "signature": signature,
                     "map_key": key,
-                    "map_hash": row["map_hash"],
+                    "map_hash": (row["map_hash"] or "").lower() or None,
                     "map_name": row["map_name"],
                     "fingerprint": fp,
                     "game_version": row["game_version"],
@@ -422,6 +443,11 @@ def analyze_crash(log_content):
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
+
+
+@app.route('/author')
+def author_page():
+    return send_from_directory(app.static_folder, 'author.html')
 
 @app.route('/api/report', methods=['POST'])
 def report_crash():
@@ -667,6 +693,62 @@ def get_aggregates():
     aggregates = [dict(row) for row in c.fetchall()]
     conn.close()
     return jsonify({"total": total, "aggregates": aggregates})
+
+
+@app.route('/api/aggregate/<signature>', methods=['GET'])
+def get_aggregate_detail(signature):
+    """作者查询：聚合详情、30 天趋势与脱敏样本（不含原始日志与本机信息）。"""
+    signature = (signature or '').strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{12}", signature):
+        return jsonify({"error": "invalid signature"}), 404
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT signature, map_key, map_hash, map_name, fingerprint, "
+              "game_version, module, relative_offset, attribution, occurrence, "
+              "annotation, first_seen, last_seen, last_report_id "
+              "FROM crash_aggregates WHERE signature = ?", (signature,))
+    row = c.fetchone()
+    if row is None:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+
+    aggregate = dict(row)
+    where, params = _aggregate_identity(aggregate)
+
+    c.execute(f"SELECT COUNT(*) FROM crash_reports WHERE {where}", params)
+    sample_total = c.fetchone()[0]
+
+    c.execute(f"SELECT map_name, timestamp, game_version, attribution, confidence, "
+              f"module, relative_offset, crash_address, analysis_result, stack, "
+              f"fingerprint_frames, dmp_info FROM crash_reports WHERE {where} "
+              f"ORDER BY timestamp DESC LIMIT 20", params)
+    samples = []
+    for item in c.fetchall():
+        sample = dict(item)
+        sample["stack"] = _parse_json(sample.pop("stack", None)) or []
+        sample["fingerprint_frames"] = _parse_json(
+            sample.pop("fingerprint_frames", None)) or []
+        sample["dmp"] = _parse_json(sample.pop("dmp_info", None))
+        samples.append(sample)
+
+    c.execute(f"SELECT date(timestamp) AS day, COUNT(*) AS count "
+              f"FROM crash_reports WHERE {where} GROUP BY day", params)
+    counts = {item["day"]: item["count"] for item in c.fetchall() if item["day"]}
+    today = datetime.now().date()
+    trend = []
+    for offset in range(29, -1, -1):
+        day = (today - timedelta(days=offset)).isoformat()
+        trend.append({"day": day, "count": counts.get(day, 0)})
+
+    conn.close()
+    return jsonify({
+        "aggregate": aggregate,
+        "trend": trend,
+        "samples": samples,
+        "sample_total": sample_total,
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=2234, debug=True)

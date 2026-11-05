@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧑‍💻 作者查询 - 魔兽崩溃分析</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/md5.js"></script>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+        h3 { font-size: 1rem; margin: 20px 0 10px; color: var(--dark); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-weight: bold; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: var(--primary); border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .query-row input[type="text"] {
+            padding: 10px 14px; border: 1px solid #dfe6e9; border-radius: 6px;
+            outline: none; min-width: 240px; font-size: 0.95em;
+        }
+        .query-row input[type="text"]:focus { border-color: var(--primary); }
+        .query-row input[type="file"] { font-size: 0.9em; }
+        .query-row button {
+            padding: 10px 22px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.95em;
+        }
+        .query-row button:disabled { background: #b2bec3; cursor: wait; }
+        .muted { color: #888; font-size: 0.9em; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
+        .meta-item .label { color: #888; font-size: 0.78em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; }
+        .chart-container { position: relative; height: 220px; margin-top: 15px; }
+        .trend-fallback { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding: 8px 0; margin-top: 6px; }
+        .trend-bar { flex: 1; background: #3498db; border-radius: 2px 2px 0 0; min-height: 2px; }
+        .stack { font-family: Consolas, monospace; font-size: 0.82em; color: #555; background: #f8f9fa; padding: 8px; border-radius: 6px; margin-top: 6px; white-space: pre-wrap; }
+        details summary { cursor: pointer; color: var(--primary); font-size: 0.85em; margin-top: 6px; }
+        .empty { text-align: center; color: #999; padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧑‍💻 作者查询</h1>
+            <p>选择地图文件（本地算 MD5，不上传）或输入地图名，查看该地图的崩溃指纹排行与脱敏样本</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+        </header>
+
+        <div class="card">
+            <h2>🔎 选择地图</h2>
+            <div class="query-row">
+                <label>地图文件：
+                    <input type="file" id="map-file" accept=".w3x,.w3m,.w3n">
+                </label>
+            </div>
+            <div class="query-row">
+                <input type="text" id="map-hash-input" placeholder="或粘贴 32 位地图 MD5">
+                <span class="muted">或</span>
+                <input type="text" id="map-name-input" list="map-list" placeholder="输入地图名">
+                <datalist id="map-list"></datalist>
+                <button id="query-btn">查询</button>
+            </div>
+            <p id="query-status" class="muted">地图文件只在本机浏览器计算哈希，不会上传；若地图尚未上报哈希，请改用地图名查询。</p>
+        </div>
+
+        <div class="card" id="ranking-card" hidden>
+            <h2>🧬 崩溃指纹排行</h2>
+            <div id="ranking-summary" class="muted"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 130px;">指纹</th>
+                        <th style="width: 70px;">版本</th>
+                        <th style="width: 170px;">模块 / 偏移</th>
+                        <th style="width: 70px;">次数</th>
+                        <th style="width: 130px;">归属</th>
+                        <th style="width: 150px;">最近出现</th>
+                        <th>标注</th>
+                    </tr>
+                </thead>
+                <tbody id="ranking-body"></tbody>
+            </table>
+        </div>
+
+        <div class="card" id="detail-card" hidden>
+            <h2>🔬 指纹详情 <span id="detail-signature"></span></h2>
+            <div id="detail-meta" class="meta-grid"></div>
+            <h3>最近 30 天出现次数</h3>
+            <div class="chart-container" id="trend-canvas-box">
+                <canvas id="detail-trend-chart"></canvas>
+            </div>
+            <div id="trend-summary" class="muted"></div>
+            <div id="trend-fallback" class="trend-fallback" hidden></div>
+            <h3>样本（最多 20 条，不含原始日志与本机信息）</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 150px;">时间</th>
+                        <th style="width: 70px;">版本</th>
+                        <th style="width: 130px;">归属</th>
+                        <th style="width: 150px;">崩溃位置</th>
+                        <th>诊断与调用栈</th>
+                    </tr>
+                </thead>
+                <tbody id="sample-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let detailChart = null;
+        let lastQuery = null;
+
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function readAsArrayBuffer(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function hashFile(file) {
+            const buffer = await readAsArrayBuffer(file);
+            return MD5(buffer);
+        }
+
+        function setStatus(text, isError) {
+            const el = document.getElementById('query-status');
+            el.textContent = text;
+            el.style.color = isError ? '#e74c3c' : '#888';
+        }
+
+        function setBusy(busy) {
+            document.getElementById('query-btn').disabled = busy;
+        }
+
+        async function query() {
+            const hash = document.getElementById('map-hash-input').value.trim().toLowerCase();
+            const name = document.getElementById('map-name-input').value.trim();
+            if (hash && !/^[0-9a-f]{32}$/.test(hash)) {
+                setStatus('MD5 必须是 32 位十六进制字符。', true);
+                return;
+            }
+            if (!hash && !name) {
+                setStatus('请选择地图文件、粘贴 MD5，或输入地图名。', true);
+                return;
+            }
+
+            setBusy(true);
+            setStatus('正在查询...', false);
+            document.getElementById('detail-card').hidden = true;
+            lastQuery = { hash, name };
+
+            try {
+                const params = new URLSearchParams();
+                if (hash) params.set('map_hash', hash);
+                else params.set('map', name);
+                const res = await fetch(`/api/aggregates?${params.toString()}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                renderRanking(data.aggregates || [], data.total || 0, hash, name);
+            } catch (e) {
+                setStatus(`查询失败：${e.message}`, true);
+                document.getElementById('ranking-card').hidden = true;
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        function renderRanking(aggregates, total, hash, name) {
+            const card = document.getElementById('ranking-card');
+            const body = document.getElementById('ranking-body');
+            const summary = document.getElementById('ranking-summary');
+            card.hidden = false;
+
+            if (!aggregates.length) {
+                summary.textContent = '';
+                body.innerHTML = '<tr><td colspan="7" class="empty">未找到带栈指纹的崩溃记录。若使用 MD5 查询，可改用地图名再试。</td></tr>';
+                setStatus('查询完成：没有匹配的聚合记录。', true);
+                return;
+            }
+
+            const mapLabel = aggregates[0].map_name || name || '未知地图';
+            const totalOccurrence = aggregates.reduce((sum, a) => sum + (a.occurrence || 0), 0);
+            summary.textContent = `地图：${mapLabel}　指纹：${total} 组　累计上报：${totalOccurrence} 次` +
+                (hash ? `　MD5：${hash}` : '');
+            setStatus(`查询完成：${aggregates.length} 组指纹。点击任意行查看趋势与样本。`, false);
+
+            body.innerHTML = aggregates.map(a => `
+                <tr data-signature="${esc(a.signature)}" style="cursor: pointer;">
+                    <td><code class="badge badge-info">${esc(a.signature)}</code></td>
+                    <td>${esc(a.game_version || '—')}</td>
+                    <td>${esc([a.module, a.relative_offset].filter(Boolean).join(' ') || '—')}</td>
+                    <td><span class="badge badge-danger">${esc(a.occurrence)}</span></td>
+                    <td>${esc(a.attribution || '—')}</td>
+                    <td class="muted">${esc(a.last_seen || '—')}</td>
+                    <td>${esc(a.annotation || '—')}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadDetail(signature) {
+            const card = document.getElementById('detail-card');
+            card.hidden = false;
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('detail-signature').textContent = signature;
+            document.getElementById('detail-meta').innerHTML = '<div class="muted">正在加载...</div>';
+            document.getElementById('sample-body').innerHTML = '';
+            if (detailChart) { detailChart.destroy(); detailChart = null; }
+
+            try {
+                const res = await fetch(`/api/aggregate/${encodeURIComponent(signature)}`);
+                if (!res.ok) throw new Error(res.status === 404 ? '该指纹不存在' : `HTTP ${res.status}`);
+                const data = await res.json();
+                renderDetail(data);
+            } catch (e) {
+                document.getElementById('detail-meta').innerHTML =
+                    `<div class="muted" style="color:#e74c3c;">加载失败：${esc(e.message)}</div>`;
+            }
+        }
+
+        function metaItem(label, value) {
+            return `<div class="meta-item"><div class="label">${esc(label)}</div>
+                <div class="value">${esc(value ?? '—')}</div></div>`;
+        }
+
+        function frameText(frame) {
+            if (!frame || typeof frame !== 'object') return '';
+            const rva = typeof frame.rva === 'number' ? '0x' + frame.rva.toString(16).toUpperCase() : '';
+            return [frame.module || 'Unknown', rva].filter(Boolean).join(' ');
+        }
+
+        function renderTrend(trend) {
+            const total = trend.reduce((sum, item) => sum + (item.count || 0), 0);
+            const summary = document.getElementById('trend-summary');
+            const fallback = document.getElementById('trend-fallback');
+            const canvasBox = document.getElementById('trend-canvas-box');
+            summary.textContent = `近 30 天共 ${total} 次`;
+            if (detailChart) { detailChart.destroy(); detailChart = null; }
+
+            if (window.Chart) {
+                fallback.hidden = true;
+                fallback.innerHTML = '';
+                canvasBox.style.display = '';
+                try {
+                    detailChart = new Chart(document.getElementById('detail-trend-chart'), {
+                        type: 'line',
+                        data: {
+                            labels: trend.map(t => t.day.slice(5)),
+                            datasets: [{
+                                label: '每日次数',
+                                data: trend.map(t => t.count),
+                                borderColor: '#3498db',
+                                backgroundColor: 'rgba(52, 152, 219, 0.12)',
+                                fill: true,
+                                tension: 0.3
+                            }]
+                        },
+                        options: {
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                        }
+                    });
+                    return;
+                } catch (e) {
+                    console.warn('趋势图渲染失败，改用简易柱状图', e);
+                }
+            }
+
+            canvasBox.style.display = 'none';
+            fallback.hidden = false;
+            const max = Math.max(1, ...trend.map(item => item.count || 0));
+            fallback.innerHTML = trend.map(item => {
+                const count = item.count || 0;
+                const height = Math.max(2, Math.round(count / max * 100));
+                return `<div class="trend-bar" style="height:${height}%" title="${esc(item.day)}：${esc(count)} 次"></div>`;
+            }).join('');
+        }
+
+        function renderDetail(data) {
+            const agg = data.aggregate || {};
+            const samples = data.samples || [];
+            document.getElementById('detail-meta').innerHTML = [
+                metaItem('地图', agg.map_name),
+                metaItem('地图 MD5', agg.map_hash),
+                metaItem('游戏版本', agg.game_version),
+                metaItem('累计次数', agg.occurrence),
+                metaItem('模块 / 偏移', [agg.module, agg.relative_offset].filter(Boolean).join(' ')),
+                metaItem('归属', agg.attribution),
+                metaItem('首次出现', agg.first_seen),
+                metaItem('最近出现', agg.last_seen),
+                metaItem('作者标注', agg.annotation || '尚未标注')
+            ].join('');
+
+            const trend = data.trend || [];
+            renderTrend(trend);
+
+            const body = document.getElementById('sample-body');
+            if (!samples.length) {
+                body.innerHTML = '<tr><td colspan="5" class="empty">暂无样本</td></tr>';
+                return;
+            }
+            body.innerHTML = samples.map(sample => {
+                const frames = (sample.stack || []).map((frame, index) =>
+                    `${String(index).padStart(2, '0')}  ${frameText(frame)}`).join('\n');
+                const dmp = sample.dmp && sample.dmp.exception
+                    ? `<div class="muted">异常码：${esc(sample.dmp.exception)}</div>` : '';
+                const details = frames
+                    ? `<details><summary>调用栈（${sample.stack.length} 帧）</summary>
+                       <div class="stack">${esc(frames)}</div></details>` : '';
+                return `
+                    <tr>
+                        <td class="muted">${esc(sample.timestamp)}</td>
+                        <td>${esc(sample.game_version || '—')}</td>
+                        <td>${esc(sample.attribution || '—')}</td>
+                        <td>
+                            <code class="badge badge-danger">${esc(sample.crash_address || '—')}</code>
+                            <div class="muted">${esc([sample.module, sample.relative_offset].filter(Boolean).join(' '))}</div>
+                            ${dmp}
+                        </td>
+                        <td>
+                            <div>${esc(sample.analysis_result || '—')}</div>
+                            ${details}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        document.getElementById('map-file').addEventListener('change', async event => {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            setBusy(true);
+            setStatus(`正在本地计算 ${file.name} 的 MD5...`, false);
+            try {
+                const hash = await hashFile(file);
+                document.getElementById('map-hash-input').value = hash;
+                setStatus(`已计算 MD5：${hash}，正在查询...`, false);
+                await query();
+            } catch (e) {
+                setStatus(`读取地图文件失败：${e.message}`, true);
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        document.getElementById('query-btn').addEventListener('click', query);
+        document.getElementById('ranking-body').addEventListener('click', event => {
+            const row = event.target.closest('tr[data-signature]');
+            if (row) loadDetail(row.dataset.signature);
+        });
+        document.getElementById('map-name-input').addEventListener('keydown', event => {
+            if (event.key === 'Enter') query();
+        });
+        document.getElementById('map-hash-input').addEventListener('keydown', event => {
+            if (event.key === 'Enter') query();
+        });
+
+        fetch('/api/stats')
+            .then(res => res.json())
+            .then(stats => {
+                const list = document.getElementById('map-list');
+                (stats.maps || []).forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    list.appendChild(option);
+                });
+            })
+            .catch(() => {});
+    </script>
+</body>
+</html>
