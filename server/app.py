@@ -100,6 +100,27 @@ def init_db():
             print(f"[*] 正在为旧数据库添加 {name} 列...")
             c.execute(f"ALTER TABLE crash_reports ADD COLUMN {name} {decl}")
 
+    # P2.2 聚合表：地图身份 + 栈指纹 → 签名 / 次数 / 作者标注
+    c.execute('''CREATE TABLE IF NOT EXISTS crash_aggregates
+                 (signature TEXT PRIMARY KEY,
+                  map_key TEXT NOT NULL,
+                  map_hash TEXT,
+                  map_name TEXT,
+                  fingerprint TEXT NOT NULL,
+                  game_version TEXT,
+                  module TEXT,
+                  relative_offset TEXT,
+                  attribution TEXT,
+                  occurrence INTEGER NOT NULL DEFAULT 0,
+                  annotation TEXT,
+                  first_seen DATETIME,
+                  last_seen DATETIME,
+                  last_report_id INTEGER)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reports_map_fingerprint "
+              "ON crash_reports(map_hash, fingerprint)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reports_fingerprint "
+              "ON crash_reports(fingerprint)")
+
     conn.commit()
     conn.close()
 
@@ -194,6 +215,127 @@ def _clean_dmp(value):
         'fallback': bool(value.get('fallback')),
     }
     return _json_text(cleaned) if any(cleaned.values()) else None
+
+
+# --- P2.2 聚合：地图身份优先用 map_hash，旧数据回退到地图名 ---
+
+def _map_key(map_hash, map_name):
+    if map_hash:
+        return "md5:" + map_hash.lower()
+    name = (map_name or "").strip().lower()
+    if not name or name == "unknown":
+        return None
+    return "name:" + name
+
+
+def _aggregate_signature(map_key, fingerprint):
+    material = f"{map_key}|{fingerprint.upper()}"
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()[:12].upper()
+
+
+def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
+                      game_version, module, relative_offset, attribution,
+                      timestamp):
+    """新崩溃入库时累加聚合次数；同一日志只入库一次，所以不会重复计数。"""
+    key = _map_key(map_hash, map_name)
+    fp = (fingerprint or "").strip().upper()
+    if not key or not fp:
+        return
+    signature = _aggregate_signature(key, fp)
+    c.execute('''INSERT INTO crash_aggregates
+                 (signature, map_key, map_hash, map_name, fingerprint,
+                  game_version, module, relative_offset, attribution,
+                  occurrence, annotation, first_seen, last_seen, last_report_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)
+                 ON CONFLICT(signature) DO UPDATE SET
+                  occurrence = crash_aggregates.occurrence + 1,
+                  last_seen = excluded.last_seen,
+                  last_report_id = excluded.last_report_id,
+                  map_hash = COALESCE(crash_aggregates.map_hash, excluded.map_hash),
+                  map_name = COALESCE(crash_aggregates.map_name, excluded.map_name),
+                  game_version = COALESCE(crash_aggregates.game_version, excluded.game_version),
+                  module = COALESCE(crash_aggregates.module, excluded.module),
+                  relative_offset = COALESCE(crash_aggregates.relative_offset, excluded.relative_offset),
+                  attribution = COALESCE(crash_aggregates.attribution, excluded.attribution)''',
+              (signature, key, map_hash, map_name, fp, game_version, module,
+               relative_offset, attribution, timestamp, timestamp, report_id))
+
+
+def rebuild_aggregates(conn=None):
+    """按 map_key + 指纹重建聚合表；保留已有作者标注。"""
+    own_conn = conn is None
+    if own_conn:
+        conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        annotations = {
+            row["signature"]: row["annotation"]
+            for row in conn.execute(
+                "SELECT signature, annotation FROM crash_aggregates "
+                "WHERE annotation IS NOT NULL AND annotation <> ''")
+        }
+        conn.execute("DELETE FROM crash_aggregates")
+        rows = conn.execute(
+            "SELECT id, map_hash, map_name, fingerprint, game_version, module, "
+            "relative_offset, attribution, timestamp FROM crash_reports "
+            "WHERE fingerprint IS NOT NULL AND fingerprint <> '' "
+            "ORDER BY timestamp, id")
+
+        aggregates = {}
+        for row in rows:
+            key = _map_key(row["map_hash"], row["map_name"])
+            fp = (row["fingerprint"] or "").strip().upper()
+            if not key or not fp:
+                continue
+            signature = _aggregate_signature(key, fp)
+            entry = aggregates.get(signature)
+            if entry is None:
+                entry = {
+                    "signature": signature,
+                    "map_key": key,
+                    "map_hash": row["map_hash"],
+                    "map_name": row["map_name"],
+                    "fingerprint": fp,
+                    "game_version": row["game_version"],
+                    "module": row["module"],
+                    "relative_offset": row["relative_offset"],
+                    "attribution": row["attribution"],
+                    "occurrence": 0,
+                    "first_seen": row["timestamp"],
+                }
+                aggregates[signature] = entry
+            else:
+                for field in ("map_hash", "map_name", "game_version",
+                              "module", "relative_offset", "attribution"):
+                    if not entry[field] and row[field]:
+                        entry[field] = row[field]
+            entry["occurrence"] += 1
+            entry["last_seen"] = row["timestamp"]
+            entry["last_report_id"] = row["id"]
+
+        for entry in aggregates.values():
+            conn.execute('''INSERT INTO crash_aggregates
+                            (signature, map_key, map_hash, map_name, fingerprint,
+                             game_version, module, relative_offset, attribution,
+                             occurrence, annotation, first_seen, last_seen,
+                             last_report_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                         (entry["signature"], entry["map_key"], entry["map_hash"],
+                          entry["map_name"], entry["fingerprint"],
+                          entry["game_version"], entry["module"],
+                          entry["relative_offset"], entry["attribution"],
+                          entry["occurrence"],
+                          annotations.get(entry["signature"]),
+                          entry["first_seen"], entry["last_seen"],
+                          entry["last_report_id"]))
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+
+
+rebuild_aggregates()
 
 def extract_crash_info(log_content):
     """
@@ -313,25 +455,38 @@ def report_crash():
     else:
         map_name = client_map
 
+    module = _module(data.get('module'))
+    relative_offset = normalize_offset(data.get('relative_offset'))
+    game_version = normalize_version(_text(data.get('game_version'), 40))
+    attribution = _attribution(data.get('attribution'))
+    confidence = _confidence(data.get('confidence'))
+    fingerprint = _fingerprint(data.get('fingerprint'))
+    fingerprint_version = normalize_version(_text(data.get('fingerprint_version'), 40))
+    fingerprint_frames = _frame_list(data.get('fingerprint_frames'))
+    map_hash = _map_hash(data.get('map_hash'))
+    stack = _stack_list(data.get('stack'))
+    dmp_info = _clean_dmp(data.get('dmp'))
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
     fields = (
         map_name,
         os_info,
         addr,
         log_content,
         content_hash,
-        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        timestamp,
         analysis,
-        _module(data.get('module')),
-        normalize_offset(data.get('relative_offset')),
-        normalize_version(_text(data.get('game_version'), 40)),
-        _attribution(data.get('attribution')),
-        _confidence(data.get('confidence')),
-        _fingerprint(data.get('fingerprint')),
-        normalize_version(_text(data.get('fingerprint_version'), 40)),
-        _frame_list(data.get('fingerprint_frames')),
-        _map_hash(data.get('map_hash')),
-        _stack_list(data.get('stack')),
-        _clean_dmp(data.get('dmp')),
+        module,
+        relative_offset,
+        game_version,
+        attribution,
+        confidence,
+        fingerprint,
+        fingerprint_version,
+        fingerprint_frames,
+        map_hash,
+        stack,
+        dmp_info,
     )
 
     conn = sqlite3.connect(DB_PATH)
@@ -345,6 +500,9 @@ def report_crash():
                       stack, dmp_info)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                   fields)
+        _upsert_aggregate(c, c.lastrowid, map_hash, map_name, fingerprint,
+                          game_version, module, relative_offset, attribution,
+                          timestamp)
         conn.commit()
         status = "success"
     except sqlite3.IntegrityError:
@@ -364,6 +522,8 @@ def report_crash():
                      dmp_info = COALESCE(dmp_info, ?)
                      WHERE content_hash = ?''',
                   fields[7:18] + (content_hash,))
+        # 补齐字段可能改变所属指纹，重新聚合一次最稳妥
+        rebuild_aggregates(conn)
         conn.commit()
     conn.close()
     
@@ -407,12 +567,30 @@ def get_stats():
     # Get all maps for filter dropdown
     c.execute("SELECT DISTINCT map_name FROM crash_reports ORDER BY map_name")
     maps = [row['map_name'] for row in c.fetchall()]
+
+    # P2.2 聚合排行（地图哈希/地图名 + 栈指纹）
+    agg_where = []
+    agg_params = []
+    if map_filter:
+        agg_where.append("map_name = ?")
+        agg_params.append(map_filter)
+    if search_query:
+        agg_where.append("(map_name LIKE ? OR fingerprint LIKE ? "
+                         "OR module LIKE ? OR annotation LIKE ?)")
+        agg_params.extend([f"%{search_query}%"] * 4)
+    agg_clause = " WHERE " + " AND ".join(agg_where) if agg_where else ""
+    c.execute(f"SELECT signature, map_hash, map_name, fingerprint, game_version, "
+              f"module, relative_offset, attribution, occurrence, annotation, "
+              f"last_seen FROM crash_aggregates{agg_clause} "
+              f"ORDER BY occurrence DESC, last_seen DESC LIMIT 10", agg_params)
+    top_fingerprints = [dict(row) for row in c.fetchall()]
     
     conn.close()
     return jsonify({
         "total_reports": total,
         "top_maps": top_maps,
         "top_reasons": top_reasons,
+        "top_fingerprints": top_fingerprints,
         "trends": trends[::-1], # chronological order
         "maps": maps
     })
@@ -446,6 +624,49 @@ def get_crashes():
     crashes = [dict(row) for row in c.fetchall()]
     conn.close()
     return jsonify(crashes)
+
+
+@app.route('/api/aggregates', methods=['GET'])
+def get_aggregates():
+    """按地图身份 + 栈指纹聚合的排行；map_hash 精确优先，旧数据可按地图名查。"""
+    raw_hash = (request.args.get('map_hash') or '').strip()
+    map_hash = _map_hash(raw_hash) if raw_hash else None
+    if raw_hash and not map_hash:
+        return jsonify({"total": 0, "aggregates": []})
+    map_name = (request.args.get('map') or '').strip()
+    fingerprint = _fingerprint(request.args.get('fingerprint'))
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 50))))
+    except (TypeError, ValueError):
+        limit = 50
+
+    where_clauses = []
+    params = []
+    if map_hash:
+        where_clauses.append("map_hash = ?")
+        params.append(map_hash)
+    if map_name:
+        where_clauses.append("map_name = ?")
+        params.append(map_name)
+    if fingerprint:
+        where_clauses.append("fingerprint = ?")
+        params.append(fingerprint)
+    where_clause = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM crash_aggregates{where_clause}", params)
+    total = c.fetchone()[0]
+    c.execute(f"SELECT signature, map_key, map_hash, map_name, fingerprint, "
+              f"game_version, module, relative_offset, attribution, occurrence, "
+              f"annotation, first_seen, last_seen, last_report_id "
+              f"FROM crash_aggregates{where_clause} "
+              f"ORDER BY occurrence DESC, last_seen DESC LIMIT ?",
+              params + [limit])
+    aggregates = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return jsonify({"total": total, "aggregates": aggregates})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=2234, debug=True)

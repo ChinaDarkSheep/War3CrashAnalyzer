@@ -86,6 +86,25 @@
             </div>
         </div>
 
+        <div class="card" style="margin-bottom: 25px;">
+            <h2>🧬 崩溃指纹聚合 (Top 10)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 180px;">地图</th>
+                        <th style="width: 70px;">版本</th>
+                        <th style="width: 120px;">指纹</th>
+                        <th style="width: 200px;">模块 / 偏移</th>
+                        <th style="width: 80px;">次数</th>
+                        <th style="width: 120px;">归属</th>
+                        <th>最近出现</th>
+                    </tr>
+                </thead>
+                <tbody id="agg-body">
+                </tbody>
+            </table>
+        </div>
+
         <div class="card">
             <h2>📜 实时诊断流 (最新 20 条)</h2>
             <table id="crash-table">
@@ -196,6 +215,21 @@
                         scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
                     }
                 });
+
+                // Aggregated fingerprints (P2.2)
+                const aggBody = document.getElementById('agg-body');
+                const aggregates = stats.top_fingerprints || [];
+                aggBody.innerHTML = aggregates.length ? aggregates.map(a => `
+                    <tr>
+                        <td style="font-weight: 500;">${esc(a.map_name || '—')}</td>
+                        <td>${esc(a.game_version || '—')}</td>
+                        <td><code class="badge badge-info">${esc(a.signature)}</code></td>
+                        <td>${esc([a.module, a.relative_offset].filter(Boolean).join(' ') || '—')}</td>
+                        <td><span class="badge badge-danger">${esc(a.occurrence)}</span></td>
+                        <td>${esc(a.attribution || '—')}</td>
+                        <td style="color: #888; font-size: 0.85em;">${esc(a.last_seen || '—')}</td>
+                    </tr>
+                `).join('') : '<tr><td colspan="7" style="text-align:center;color:#999;">暂无聚合数据</td></tr>';
 
                 // Crashes Table
                 const crashRes = await fetch(`/api/crashes${query}`);
