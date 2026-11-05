@@ -308,22 +308,12 @@
           "suggestion": "优先在单机模式复现；若只在对战平台出现，关闭平台插件或更换平台版本后重试。该路径是引擎 UI 帧生命周期问题，与具体地图脚本无直接对应。"
         },
         "0x002651E4": {
-          "desc": "单位组枚举 (GroupEnum) 崩溃。通常是因为传入了已销毁的组句柄，或在枚举过程中删除了正在被枚举的单位。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false,
-          "apis": [
-            "GroupEnumUnitsInRange",
-            "GroupEnumUnitsInRangeCounted",
-            "GroupEnumUnitsInRangeOfLoc",
-            "GroupEnumUnitsInRangeOfLocCounted",
-            "GroupEnumUnitsInRect",
-            "GroupEnumUnitsInRectCounted",
-            "GroupEnumUnitsOfPlayer",
-            "GroupEnumUnitsOfType",
-            "GroupEnumUnitsOfTypeCounted",
-            "GroupEnumUnitsSelected"
-          ]
+          "desc": "JASS 玩家槽越界导致的句柄注册崩溃。Player(integer) / GetLocalPlayer() 通过 0x1C3330 读取 CGameWar3+0x58+index*4 的玩家槽指针，数组只有 16 项（构造函数 push 0x10、push 4 初始化）；索引 16 越界读到紧随其后的 +0x98 成员（实测为 0x10）。句柄注册函数 0x2651D0 只判空不判有效性，崩溃指令 mov esi,[ebx+0x10] 访问 0x20 触发访问违规，与日志 referenced memory at 0x00000020 一致。3 份真实 dump 中 2 份由地图脚本传入 Player(16)，1 份由 War3API.dll 调用 GetLocalPlayer 触发。旧文案所称 GroupEnum 单位组枚举无任何日志或反汇编证据。",
+          "source": "static/2026-11-05",
+          "confidence": 0.8,
+          "verified": true,
+          "attribution": "地图",
+          "suggestion": "该玩家槽数组只有 16 项（索引 0-15），传入 16 会越界。先在地图脚本中搜索 Player(16) 以及上限写成 16 的循环（含循环变量 <= 16 的写法），改为 0-15 并先确认玩家存在；若未找到且本机装有 War3API.dll 等第三方 JASS 插件，请先关闭插件单机复现以排除插件自身问题。"
         },
         "0x0010D793": {
           "desc": "单位属性访问冲突。脚本尝试访问一个不存在或已移除单位的状态（如生命值、魔法值）。",
