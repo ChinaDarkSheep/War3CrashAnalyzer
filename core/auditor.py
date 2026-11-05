@@ -7,7 +7,6 @@ import traceback
 import hashlib
 import json
 import re
-import shutil
 import time
 from core.knowledge import (
     EXCEPTION_CODES,
@@ -18,7 +17,10 @@ from core.knowledge import (
     normalize_offset,
     normalize_version,
 )
-from core.constants import COMMON_DICT
+from core.map_extract import (
+    build_dynamic_listfile,
+    extract_script_with_mpq,
+)
 from core.logtext import detect_host, diagnose_plain, read_log
 from core.stack_parser import describe_stack, find_crash_frame, first_valid_frame, parse_stack_trace
 from core.environment import analyze_environment
@@ -39,100 +41,17 @@ class Auditor:
             self.history = None
 
     def _build_dynamic_listfile(self, map_file, temp_dir):
-        """扫描地图二进制文件并结合本地字典，构建用于提取的 Listfile。"""
-        path_pattern = re.compile(rb'[a-zA-Z0-9_\\]+\.(?:j|lua|w3u|w3a|w3h|w3t|w3b|w3d|w3q|wts)', re.I)
-        found_paths = set(COMMON_DICT)
-        found_paths.update({"war3map.j", "scripts\\war3map.j", "war3map.lua", "scripts\\war3map.lua"})
-        
-        # 1. 尝试从本地 listfiles 目录加载字典
-        listfiles_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "listfiles")
-        if os.path.exists(listfiles_dir):
-            for f_name in os.listdir(listfiles_dir):
-                if f_name.endswith(".txt"):
-                    try:
-                        with open(os.path.join(listfiles_dir, f_name), 'r', encoding='utf-8', errors='ignore') as lf:
-                            for line in lf:
-                                line = line.strip()
-                                if len(line) > 3:
-                                    found_paths.add(line)
-                    except: pass
-
-        # 2. 动态扫描二进制数据 (前 30MB)
-        try:
-            with open(map_file, 'rb') as f:
-                chunk = f.read(30 * 1024 * 1024)
-                for m in path_pattern.finditer(chunk):
-                    try:
-                        path = m.group().decode('ascii', errors='ignore')
-                        if len(path) > 3:
-                            found_paths.add(path)
-                    except: pass
-        except: pass
-            
-        listfile_path = os.path.join(temp_dir, "auditor_listfile.txt")
-        with open(listfile_path, 'w', encoding='ascii', errors='ignore') as f:
-            for p in sorted(found_paths):
-                f.write(p + "\n")
-        return listfile_path
+        """兼容入口：实际构建逻辑位于 core.map_extract。"""
+        return build_dynamic_listfile(map_file, temp_dir)
 
     def _find_and_extract_jass_script(self, map_file, mpq_editor_path, output_dir):
-        """
-        增强型脚本提取逻辑：
-        1. 尝试直接提取常用路径
-        2. 动态扫描二进制构建 listfile 并通过 /list 提取
-        3. 筛选体积最大的脚本文件
-        """
+        """兼容入口：实际提取逻辑位于 core.map_extract。"""
         self.log("[*] 正在初始化增强型脚本提取...")
-        
-        # 1. 尝试提取关键路径 (配合 Listfile)
-        listfile = self._build_dynamic_listfile(map_file, output_dir)
-        common_names = ["war3map.j", "scripts\\war3map.j", "war3map.lua", "scripts\\war3map.lua"]
-        
-        for name in common_names:
-            target_p = os.path.join(output_dir, os.path.basename(name))
-            if os.path.exists(target_p): os.remove(target_p)
-            
-            cmd = [mpq_editor_path, "/extract", map_file, name, output_dir, "/listfile", listfile]
-            subprocess.run(cmd, capture_output=True)
-            
-            if os.path.exists(target_p) and os.path.getsize(target_p) > 100:
-                self.log(f"[+] 成功提取脚本: {name}")
-                return target_p
-
-        # 2. 深度扫描提取 (混淆名识别)
-        self.log("[*] 常规路径提取失败，正在通过深度扫描识别混淆名...")
-        list_cmd = [mpq_editor_path, "/list", map_file, "/listfile", listfile]
-        
-        try:
-            result = subprocess.run(list_cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=30)
-            if result.returncode == 0 and result.stdout:
-                files = result.stdout.strip().splitlines()
-                jass_files = [f.strip() for f in files if f.strip().lower().endswith(('.j', '.lua'))]
-                
-                if jass_files:
-                    extracted_scripts = []
-                    for jf in jass_files:
-                        safe_name = os.path.basename(jf)
-                        subprocess.run([mpq_editor_path, "/extract", map_file, jf, output_dir], capture_output=True)
-                        p = os.path.join(output_dir, safe_name)
-                        if os.path.exists(p):
-                            extracted_scripts.append((p, os.path.getsize(p)))
-                    
-                    if extracted_scripts:
-                        extracted_scripts.sort(key=lambda x: x[1], reverse=True)
-                        best_p = extracted_scripts[0][0]
-                        ext = os.path.splitext(best_p)[1].lower()
-                        final_p = os.path.join(output_dir, "war3map" + ext)
-                        
-                        if os.path.exists(final_p): os.remove(final_p)
-                        shutil.move(best_p, final_p)
-                        self.log(f"[+] 深度扫描成功识别主脚本: {os.path.basename(best_p)} ({os.path.getsize(final_p)/1024:.1f} KB)")
-                        return final_p
-        except Exception as e:
-            self.log(f"[-] 深度扫描异常: {e}")
-
-        self.log("[-] 提取失败：所有策略均无法找到脚本文件。")
-        return None
+        result = extract_script_with_mpq(
+            map_file, mpq_editor_path, output_dir, log=self.log)
+        if not result.get("script_path"):
+            self.log("[-] 提取失败：所有策略均无法找到脚本文件。")
+        return result.get("script_path")
 
     def deep_extract_worker(self, map_file, mpq_editor_path, base_dir, finish_callback=None):
         self.log("\n" + "="*70)

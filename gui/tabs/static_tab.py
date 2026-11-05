@@ -40,6 +40,9 @@ class StaticTab(BaseTab):
         self.jass_audit_btn = tk.Button(btn_container, text="📜 JASS 审计", command=self.start_jass_audit, bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.jass_audit_btn.pack(side=tk.LEFT, padx=2)
 
+        self.locator_btn = tk.Button(btn_container, text="指纹定位", command=self.open_locator, bg="#1abc9c", fg="white", font=("微软雅黑", 9, "bold"), width=12)
+        self.locator_btn.pack(side=tk.LEFT, padx=2)
+
         self.crash_btn = tk.Button(btn_container, text="📄 诊断日志", command=self.analyze_last_crash, bg="#9b59b6", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.crash_btn.pack(side=tk.LEFT, padx=2)
 
@@ -113,6 +116,15 @@ class StaticTab(BaseTab):
         threading.Thread(target=self.auditor.jass_audit_worker, 
                          args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.jass_audit_btn.config(state=tk.NORMAL)), 
                          daemon=True).start()
+
+    def open_locator(self):
+        from gui.locator_dialog import FingerprintLocatorDialog
+        dialog = getattr(self, "locator_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.lift()
+            dialog.focus_force()
+            return
+        self.locator_dialog = FingerprintLocatorDialog(self, self.app)
 
     def analyze_last_crash(self):
         self.update_status("正在启动批量分析流程...")

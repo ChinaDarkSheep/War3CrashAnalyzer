@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": 2,
+    "version": 3,
     "updated": "2026-11-05",
     "note": "条目均为历史社区流传结论，除 verified=true 外仅作线索，不作为确定性诊断。address_space=RVA(模块内偏移)。"
   },
@@ -33,7 +33,19 @@
           "desc": "GroupEnumUnitsInRange 崩溃。通常是因为传入了 null 组句柄。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "GroupEnumUnitsInRange",
+            "GroupEnumUnitsInRangeCounted",
+            "GroupEnumUnitsInRangeOfLoc",
+            "GroupEnumUnitsInRangeOfLocCounted",
+            "GroupEnumUnitsInRect",
+            "GroupEnumUnitsInRectCounted",
+            "GroupEnumUnitsOfPlayer",
+            "GroupEnumUnitsOfType",
+            "GroupEnumUnitsOfTypeCounted",
+            "GroupEnumUnitsSelected"
+          ]
         },
         "0x00469220": {
           "desc": "RemoveLocation 崩溃。通常是因为传入了 null 点句柄。",
@@ -75,7 +87,16 @@
           "desc": "GetExpiredTimer() 冲突。定时器到期函数中引用了非定时器对象或空句柄。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "TimerStart",
+            "GetExpiredTimer",
+            "TimerGetElapsed",
+            "TimerGetRemaining",
+            "TimerGetTimeout",
+            "DestroyTimer",
+            "PauseTimer"
+          ]
         },
         "0x0012CF32": {
           "desc": "商店购买崩溃。通常是由于非英雄单位（如山丘之王）尝试从特定商店购买物品。",
@@ -99,7 +120,13 @@
           "desc": "I2* 系列转换函数崩溃。传入了非法参数（如 -1~-3 或 -9~-12）。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "I2S",
+            "I2R",
+            "I2B",
+            "I2C"
+          ]
         },
         "0x002F05C2": {
           "desc": "路径寻路逻辑崩溃。两个单位之间完全没有可行路径时的死循环或空引用。",
@@ -117,7 +144,13 @@
           "desc": "I2* 转换函数严重溢出。参数小于等于 -13 或过大导致的内存越界。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "I2S",
+            "I2R",
+            "I2B",
+            "I2C"
+          ]
         },
         "0x00438E02": {
           "desc": "治疗守卫 ('Ahwd') 崩溃。召唤单位 ID 为空或未正确定义。",
@@ -165,13 +198,28 @@
           "desc": "ExecuteFunction 崩溃。尝试执行一个不存在或名为 null 的字符串函数。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "ExecuteFunc"
+          ]
         },
         "0x006B37BB": {
           "desc": "GroupEnumUnitsInRange 回调签名错误。Condition 参数必须是 takes nothing returns boolean。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "GroupEnumUnitsInRange",
+            "GroupEnumUnitsInRangeCounted",
+            "GroupEnumUnitsInRangeOfLoc",
+            "GroupEnumUnitsInRangeOfLocCounted",
+            "GroupEnumUnitsInRect",
+            "GroupEnumUnitsInRectCounted",
+            "GroupEnumUnitsOfPlayer",
+            "GroupEnumUnitsOfType",
+            "GroupEnumUnitsOfTypeCounted",
+            "GroupEnumUnitsSelected"
+          ]
         }
       },
       "1.26a": {
@@ -197,7 +245,17 @@
           "desc": "排泄/句柄 (Handle) 问题。通常与计时器或已销毁单位的引用有关。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "DestroyGroup",
+            "DestroyTimer",
+            "DestroyTrigger",
+            "DestroyEffect",
+            "DestroyUnit",
+            "RemoveUnit",
+            "DestroyTextTag",
+            "DestroyLightning"
+          ]
         },
         "0x0000836F": {
           "desc": "模型/纹理丢失。尝试加载一个不存在的 .mdx 或 .blp 文件。",
@@ -247,7 +305,19 @@
           "desc": "单位组枚举 (GroupEnum) 崩溃。通常是因为传入了已销毁的组句柄，或在枚举过程中删除了正在被枚举的单位。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "GroupEnumUnitsInRange",
+            "GroupEnumUnitsInRangeCounted",
+            "GroupEnumUnitsInRangeOfLoc",
+            "GroupEnumUnitsInRangeOfLocCounted",
+            "GroupEnumUnitsInRect",
+            "GroupEnumUnitsInRectCounted",
+            "GroupEnumUnitsOfPlayer",
+            "GroupEnumUnitsOfType",
+            "GroupEnumUnitsOfTypeCounted",
+            "GroupEnumUnitsSelected"
+          ]
         },
         "0x0010D793": {
           "desc": "单位属性访问冲突。脚本尝试访问一个不存在或已移除单位的状态（如生命值、魔法值）。",
@@ -271,7 +341,16 @@
           "desc": "计时器 (Timer) 回调崩溃。计时器到期时引用的数据对象已失效，或计时器在回调函数内部被非法销毁。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "TimerStart",
+            "GetExpiredTimer",
+            "TimerGetElapsed",
+            "TimerGetRemaining",
+            "TimerGetTimeout",
+            "DestroyTimer",
+            "PauseTimer"
+          ]
         },
         "0x00084510": {
           "desc": "魔兽内置 UI 刷新崩溃。常见于多面板 (Multiboard) 更新过快。",
@@ -283,7 +362,19 @@
           "desc": "GroupEnumUnitsInRange 崩溃。空句柄引用。",
           "source": "legacy",
           "confidence": 0.4,
-          "verified": false
+          "verified": false,
+          "apis": [
+            "GroupEnumUnitsInRange",
+            "GroupEnumUnitsInRangeCounted",
+            "GroupEnumUnitsInRangeOfLoc",
+            "GroupEnumUnitsInRangeOfLocCounted",
+            "GroupEnumUnitsInRect",
+            "GroupEnumUnitsInRectCounted",
+            "GroupEnumUnitsOfPlayer",
+            "GroupEnumUnitsOfType",
+            "GroupEnumUnitsOfTypeCounted",
+            "GroupEnumUnitsSelected"
+          ]
         },
         "0x001FE500": {
           "desc": "RemoveLocation 崩溃。空句柄引用。",

@@ -25,6 +25,9 @@ war3crashanalyzer/
 │   ├── fingerprint.py      # 栈指纹：版本 + 栈顶 N 帧，用于崩溃聚类
 │   ├── watcher.py          # 监听 Errors 目录，新崩溃自动诊断
 │   ├── bundle.py           # 诊断包导出：日志 + dmp + JSON + QQ 摘要
+│   ├── map_extract.py      # 地图脚本提取：w3x2lni 优先，MPQEditor 回退
+│   ├── pjass.py            # pjass 外部调用与语法错误解析
+│   ├── script_locator.py   # 指纹 -> API 调用行定位、诊断包/云端指纹导入
 │   └── constants.py        # JASS 语法常量与正则表达式定义
 ├── engine/                 # 底层交互模块
 │   ├── dmp_parser.py       # Minidump 解析：模块版本、异常上下文、调用栈
@@ -37,6 +40,7 @@ war3crashanalyzer/
 │       ├── static_tab.py   # 静态审计界面
 │       ├── local_tab.py    # 本地调试/实时监控界面
 │       ├── leak_fix_tab.py # 泄露定位&修复界面
+│       ├── locator_dialog.py # 指纹定位对话框（作者工具）
 │       └── adv_tab.py      # 高级工具与系统设置界面
 ├── archive/                # 已归档的历史单体版，不参与打包与运行
 └── assets/                 # 图标、图片等静态资源
@@ -52,6 +56,7 @@ war3crashanalyzer/
 *   **栈指纹聚类**：用「游戏版本 + 栈顶 5 个非系统帧」计算 12 位指纹，写入本地 `history.db`，并按日志去重统计同一崩溃的累计次数与涉及地图数；批量诊断结束时会列出重复崩溃排行，便于判断是普遍问题还是个别地图问题。
 *   **自动收集**：后台监听配置目录、同级魔兽副本以及运行中游戏进程所在目录的 `Errors`，新日志写入稳定后自动诊断并弹出托盘提示；可在「高级工具 & 设置」中关闭。诊断只在本机进行，不会因此额外上传日志。
 *   **诊断包导出**：一键把最新崩溃日志、同名 `.dmp`、诊断 JSON 与一段摘要文本打包成 zip。JSON 含归一化与原始版本号、地图名与 MD5、插件列表、栈指纹、调用栈和四行结论；摘要使用 UTF-8 BOM 并自动复制到剪贴板，可直接粘贴给作者。包内不含本机绝对路径。
+*   **指纹定位（作者工具）**：在「静态审计」页点击「指纹定位」，可导入诊断包/诊断 JSON，或输入 12 位指纹从服务端拉取聚合详情。工具按知识库条目与作者标注推导可疑 API（如 `GroupEnum*`、`TimerStart`、`ExecuteFunc`），打开地图脚本列出每个调用的行号与代码片段；同时调用本机 `pjass.exe` 做语法检查。脚本提取优先使用外部 `w2l.exe`（w3x2lni）还原加密地图文件名；对于删除了 `(listfile)` 的加密地图，`w2l` 会拒绝直接转换，工具先用 MPQEditor 把地图展开成目录，再以目录模式交给 w3x2lni，仍可得到真实文件名与完整 listfile。展开后会扫描脚本、物编与模型中的资源路径，用地图自身 MPQ 哈希表校验并补全 `File00000xxx` 占位名，报告中给出资源名识别覆盖率。超大脚本（上千个函数）可能让 pjass 直接崩溃，工具会按顶层函数边界自动分段检查并还原原始行号，报告会标注“分 N 段检查”；分段仍失败时明确提示“语法检查未完成”，不会误报为 0 个错误。诊断包导入、脚本分析与语法检查全部在本机完成。
 
 ### 2. 内存监控 (Engine.Memory)
 *   **JassVMMonitor**：通过读取 `Game.dll` 内存，追踪 JASS 虚拟机的活跃线程、调用栈偏移量。
@@ -71,6 +76,7 @@ war3crashanalyzer/
     *   在 `gui/app.py` 的 `setup_ui` 方法中实例化并添加到 `notebook`。
 2.  **更新崩溃知识库**：
     *   直接修改 `knowledge.json`，按 `modules -> 模块名 -> 版本 -> RVA` 增加条目；所有条目必须声明 `source / confidence / verified`。
+    *   可选字段 `apis` 用于作者定位：填写该崩溃可能相关的 JASS API 名称（如 `GroupEnumUnitsInRange`），指纹定位会据此列出脚本调用位置。
 3.  **底层 API 扩展**：
     *   如果需要新的 Windows API 或内存读取逻辑，请在 `engine/memory.py` 中封装，不要直接写在 GUI 类里。
 4.  **日志输出**：
@@ -86,6 +92,11 @@ war3crashanalyzer/
 *   `pillow`: 图像处理 (用于 UI 图标与系统托盘)
 *   `pystray`: 系统托盘图标支持
 *   `minidump`: Minidump (.dmp) 解析，缺失时自动回退到内置轻量解析器
+
+### 外部程序（可选，不随项目分发）
+
+*   `pjass.exe`：JASS 语法检查器（BSD-2-Clause）。放在 `tools/pjass.exe`、程序根目录，或设置环境变量 `WAR3_PJASS`；也可在定位对话框中手动选择。默认使用 `+nosemanticerror`，不需要 `common.j` / `Blizzard.j`。超大脚本触发 pjass 崩溃时会自动分段重试。
+*   `w2l.exe`：w3x2lni 命令行工具（GPL-3.0），用于还原加密地图文件名并生成完整 listfile。放在 `tools/w2l.exe`、程序根目录，或设置环境变量 `W3X2LNI_PATH`；未配置时自动回退 MPQEditor + 本地字典提取。地图删除 `(listfile)` 时，工具会自动改用“MPQEditor 展开目录 → w3x2lni 目录转换”的中转路径。整个 w3x2lni 文件夹（含 `bin/`、`script/`、`data/`）必须放在一起，不能只复制 `w2l.exe`。
 
 ## 💡 交互说明
 
