@@ -178,7 +178,14 @@ $env:WAR3_ADMIN_TOKEN='请换成足够长的随机字符串'
    打开浏览器访问 `http://43.163.75.93:2234`
 
 ## 目录结构
-- `app.py`: Flask 主程序及 API 接口（默认监听 2234 端口）。
+- `app.py`: 服务入口，创建应用、注册蓝图并执行建库/聚合重建/到期清理（默认监听 2234 端口）。
+- `settings.py`: 路径、环境变量、上传限制与共享知识库加载。
+- `common.py`: 版本/偏移归一化、上报字段校验与聚合签名。
+- `db.py`: SQLite 建表/迁移、聚合累加与全量重建。
+- `legacy_report.py`: 旧版 `/api/report` 的日志解析与知识库查表。
+- `upload_store.py`: 上传落盘、zip 安全校验、崩溃区/KK 区解析、限流与到期清理。
+- `diagnosis.py`: 服务端诊断（复用 `core/`）与上传日志入库。
+- `blueprints/`: 路由蓝图（`pages` / `uploads` / `admin` / `reports` / `aggregates`）。
 - `crash_data.db`: SQLite 数据库（自动生成，含聚合、案例缓存与上传账单）。
 - `uploads/`: 原始日志私有目录（自动生成，默认保留 14 天，已被 `.gitignore` 忽略）。
 - `static/index.html`: 总览仪表盘。

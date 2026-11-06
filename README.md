@@ -43,7 +43,10 @@ war3crashanalyzer/
 │       ├── locator_dialog.py # 指纹定位对话框（作者工具）
 │       └── adv_tab.py      # 高级工具与系统设置界面
 ├── server/                 # 配套 Web 服务：聚合统计、作者查询、日志上传、管理端
-│   ├── app.py              # Flask 主程序与 API
+│   ├── app.py              # 服务入口：创建应用并注册蓝图
+│   ├── settings.py / common.py / db.py / diagnosis.py  # 配置、校验、数据库与诊断
+│   ├── upload_store.py     # 上传落盘、zip 校验、崩溃区/平台区解析
+│   ├── blueprints/         # 页面 / 上传 / 管理端 / 上报统计 / 聚合标注路由
 │   ├── static/             # 总览 / 作者查询 / 上传 / 上传码状态页 / 管理端
 │   └── README_SERVER.md    # 服务端接口、部署与隐私说明
 ├── archive/                # 已归档的历史单体版，不参与打包与运行
@@ -72,7 +75,7 @@ war3crashanalyzer/
 *   `CreateTrigger` / `CreateTimer` / `InitHashtable` 不会被自动销毁，避免修复后地图逻辑失效。
 
 ### 4. 配套 Web 服务 (Server)
-*   **自动上报与聚合**：`server/app.py` 提供 `/api/report`、`/api/stats`、`/api/aggregates`，按「地图身份 + 栈指纹」聚合相同崩溃并统计次数；`/author` 供地图作者按地图哈希或地图名查询崩溃指纹排行、趋势与脱敏样本。
+*   **自动上报与聚合**：服务端提供 `/api/report`、`/api/stats`、`/api/aggregates`，按「地图身份 + 栈指纹」聚合相同崩溃并统计次数；`/author` 供地图作者按地图哈希或地图名查询崩溃指纹排行、趋势与脱敏样本。路由按职责拆分在 `server/blueprints/`，入口仍是 `server/app.py`。
 *   **作者标注**：作者可回填根因、来源与置信度，写入需服务端配置 `WAR3_ANNOTATION_TOKEN`（未配置时禁用），标注同步沉淀到案例缓存，不自动改写全局 `knowledge.json`。
 *   **原始日志采集**：`/upload` 提供崩溃记录与 KK 平台日志两个上传区，支持拖拽文件夹与 zip；单次上限 **50 MB**，按内容哈希去重，成功后返回 **6 位上传码**。崩溃区按子目录识别多次崩溃，KK 区从 `war3dll.log` 补充版本、地图名与 MD5，覆盖平台局没有 `Errors` 文件的情况。
 *   **服务端入库**：上传的每份崩溃日志会在服务端复用客户端解析模块重新诊断，写入 `crash_reports` 并累加 `crash_aggregates`，与自动上报共用同一套知识库与聚合口径；重复内容只补齐字段，不重复计数。
