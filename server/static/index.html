@@ -67,6 +67,7 @@
                 </select>
                 <input type="text" id="search-input" placeholder="🔍 搜索地图、地址或原因..." oninput="fetchData()">
             </div>
+            <a class="nav-link" href="/maps">🗺️ 地图看板 →</a>
             <a class="nav-link" href="/upload">📤 上传日志 →</a>
             <a class="nav-link" href="/author">🧑‍💻 作者查询 →</a>
             <a class="nav-link" href="/download">⬇️ 下载客户端 →</a>
@@ -144,6 +145,13 @@
             return String(value ?? '').replace(/[&<>"']/g, ch => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
             }[ch]));
+        }
+
+        function mapLink(key, name) {
+            const label = esc(name || '—');
+            return key
+                ? `<a href="/map?key=${encodeURIComponent(key)}" style="color:#2c3e50;text-decoration:none;" onmouseover="this.style.color='#3498db'" onmouseout="this.style.color='#2c3e50'">${label}</a>`
+                : label;
         }
 
         async function fetchData() {
@@ -236,7 +244,7 @@
                 const aggregates = stats.top_fingerprints || [];
                 aggBody.innerHTML = aggregates.length ? aggregates.map(a => `
                     <tr>
-                        <td style="font-weight: 500;">${esc(a.map_name || '—')}${a.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(a.map_author)}</div>` : ''}</td>
+                        <td style="font-weight: 500;">${mapLink(a.map_key, a.map_name)}${a.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(a.map_author)}</div>` : ''}</td>
                         <td>${esc(a.game_version || '—')}</td>
                         <td><code class="badge badge-info">${esc(a.signature)}</code></td>
                         <td>${esc([a.module, a.relative_offset].filter(Boolean).join(' ') || '—')}</td>
@@ -253,7 +261,7 @@
                 body.innerHTML = crashes.map(c => `
                     <tr>
                         <td style="color: #888; font-size: 0.9em;">${esc(new Date(c.timestamp).toLocaleString())}</td>
-                        <td style="font-weight: 500;">${esc(c.map_name)}${c.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(c.map_author)}</div>` : ''}</td>
+                        <td style="font-weight: 500;">${mapLink(c.map_key, c.map_name)}${c.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(c.map_author)}</div>` : ''}</td>
                         <td>${esc(c.game_version || '—')}</td>
                         <td>${esc(c.attribution || '—')}</td>
                         <td><code class="badge badge-info">${esc(c.fingerprint || '—')}</code></td>

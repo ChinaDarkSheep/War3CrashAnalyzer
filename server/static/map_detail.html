@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🗺️ 地图详情 - 魔兽崩溃分析</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; word-break: break-all; }
+        header p { margin: 0 0 15px; color: #dbe7f3; word-break: break-all; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+            overflow-x: auto;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+        h3 { font-size: 1rem; margin: 22px 0 10px; color: var(--dark); }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 12px 14px; }
+        .meta-item .label { color: #888; font-size: 0.78em; margin-bottom: 5px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; }
+        .value.big { font-size: 1.35rem; color: var(--primary); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-weight: bold; white-space: nowrap; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: var(--primary); border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .badge-muted { background: #f1f2f6; color: #636e72; border: 1px solid #e2e6ea; }
+        .muted { color: #888; font-size: 0.88em; }
+        .chart-container { position: relative; height: 240px; }
+        .version-list { display: flex; flex-direction: column; gap: 12px; padding-top: 8px; }
+        .version-row { display: grid; grid-template-columns: 80px 1fr 50px; gap: 10px; align-items: center; font-size: 0.9em; }
+        .version-track { background: #eef1f4; border-radius: 4px; height: 12px; overflow: hidden; }
+        .version-fill { background: var(--primary); height: 100%; border-radius: 4px; }
+        .version-count { text-align: right; font-weight: 600; }
+        .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 22px; }
+        @media (max-width: 860px) { .chart-row { grid-template-columns: 1fr; } }
+        .trend-fallback { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding: 8px 0; margin-top: 8px; }
+        .trend-bar { flex: 1; background: #3498db; border-radius: 2px 2px 0 0; min-height: 2px; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .query-row select {
+            padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px;
+            background: white; outline: none;
+        }
+        .query-row button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white;
+        }
+        .map-link { color: var(--primary); text-decoration: none; }
+        .map-link:hover { text-decoration: underline; }
+        .annotation-text { margin-top: 6px; color: #2d3436; background: #f8f9fa; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; }
+        .empty { text-align: center; color: #999; padding: 26px; }
+        .error-box { text-align: center; padding: 50px 20px; }
+        .error-box h2 { border: none; padding: 0; color: var(--danger); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 id="page-title">🗺️ 地图详情</h1>
+            <p id="page-subtitle">按地图身份汇总的崩溃指纹与趋势</p>
+            <a class="nav-link" href="/maps">← 返回地图看板</a>
+            <a class="nav-link" href="/">🏠 总览</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+        </header>
+
+        <div id="error-card" class="card error-box" hidden>
+            <h2>无法打开地图</h2>
+            <p id="error-message" class="muted"></p>
+            <p><a class="map-link" href="/maps">返回地图看板</a></p>
+        </div>
+
+        <div id="main-card" class="card" hidden>
+            <div class="meta-grid" id="meta-grid"></div>
+        </div>
+
+        <div id="chart-card" class="card" hidden>
+            <h2>📈 近期趋势与版本分布</h2>
+            <div class="query-row" style="margin-bottom: 12px;">
+                <label class="muted">时间范围
+                    <select id="days-select">
+                        <option value="30">最近 30 天</option>
+                        <option value="90">最近 90 天</option>
+                        <option value="180">最近 180 天</option>
+                    </select>
+                </label>
+            </div>
+            <div class="chart-row">
+                <div>
+                    <h3 id="trend-title">最近 30 天崩溃次数</h3>
+                    <div class="chart-container" id="trend-canvas-box">
+                        <canvas id="trend-chart"></canvas>
+                    </div>
+                    <div id="trend-fallback" class="trend-fallback" hidden></div>
+                </div>
+                <div>
+                    <h3>版本分布</h3>
+                    <div class="chart-container" id="version-box">
+                        <canvas id="version-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="fingerprint-card" class="card" hidden>
+            <h2>🧬 崩溃指纹排行</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 130px;">指纹</th>
+                        <th style="width: 80px;">版本</th>
+                        <th style="width: 180px;">模块 / 偏移</th>
+                        <th style="width: 80px;">次数</th>
+                        <th style="width: 130px;">归属</th>
+                        <th>标注</th>
+                        <th style="width: 150px;">最近出现</th>
+                    </tr>
+                </thead>
+                <tbody id="fingerprint-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let trendChart = null;
+        let versionChart = null;
+        const mapKey = new URLSearchParams(location.search).get('key') || '';
+
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function fmtNumber(value) {
+            return Number(value || 0).toLocaleString('zh-CN');
+        }
+
+        function showError(message) {
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('error-card').hidden = false;
+        }
+
+        async function loadMap(days) {
+            const status = document.getElementById('page-subtitle');
+            try {
+                const res = await fetch(`/api/map?key=${encodeURIComponent(mapKey)}&days=${days}`);
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+                renderMap(data, days);
+                status.textContent = '按地图身份汇总的崩溃指纹与趋势';
+            } catch (e) {
+                showError(e.message || '地图不存在或暂无数据');
+                status.textContent = '按地图身份汇总的崩溃指纹与趋势';
+            }
+        }
+
+        function renderMap(data, days) {
+            const map = data.map || {};
+            document.getElementById('error-card').hidden = true;
+            document.getElementById('main-card').hidden = false;
+            document.getElementById('chart-card').hidden = false;
+            document.getElementById('fingerprint-card').hidden = false;
+
+            document.title = `🗺️ ${map.map_name || '地图详情'} - 魔兽崩溃分析`;
+            document.getElementById('page-title').textContent = `🗺️ ${map.map_name || '未命名地图'}`;
+            document.getElementById('page-subtitle').textContent = map.map_author
+                ? `地图作者：${map.map_author}` : '按地图身份汇总的崩溃指纹与趋势';
+
+            const versions = (map.versions || []).length
+                ? map.versions.map(v => `<span class="badge badge-muted">${esc(v)}</span>`).join(' ')
+                : '<span class="muted">—</span>';
+            const authorQuery = map.map_hash
+                ? `/author?hash=${encodeURIComponent(map.map_hash)}&map=${encodeURIComponent(map.map_name || '')}`
+                : `/author?map=${encodeURIComponent(map.map_name || '')}`;
+            document.getElementById('meta-grid').innerHTML = `
+                <div class="meta-item"><div class="label">地图哈希</div><div class="value">${map.map_hash ? `<code>${esc(map.map_hash)}</code>` : '未记录'}</div></div>
+                <div class="meta-item"><div class="label">地图作者</div><div class="value">${esc(map.map_author || '未记录')}</div></div>
+                <div class="meta-item"><div class="label">累计崩溃</div><div class="value big">${fmtNumber(map.occurrence)}</div></div>
+                <div class="meta-item"><div class="label">崩溃指纹</div><div class="value big">${fmtNumber(map.fingerprint_count)}</div></div>
+                <div class="meta-item"><div class="label">原始样本</div><div class="value">${fmtNumber(data.sample_total)}</div></div>
+                <div class="meta-item"><div class="label">已标注指纹</div><div class="value">${fmtNumber(map.annotation_count)}</div></div>
+                <div class="meta-item"><div class="label">游戏版本</div><div class="value">${versions}</div></div>
+                <div class="meta-item"><div class="label">首次 / 最近出现</div><div class="value" style="font-size:0.9em;">${esc(map.first_seen || '—')}<br>${esc(map.last_seen || '—')}</div></div>
+                <div class="meta-item"><div class="label">作者工具</div><div class="value"><a class="map-link" href="${authorQuery}">查看该地图的指纹与标注 →</a></div></div>
+            `;
+
+            renderTrend(data.trend || [], days);
+            renderVersionChart(data.version_distribution || []);
+            renderFingerprints(data.fingerprints || [], map);
+        }
+
+        function renderTrend(trend, days) {
+            document.getElementById('trend-title').textContent = `最近 ${days} 天崩溃次数`;
+            const box = document.getElementById('trend-fallback');
+            const labels = trend.map(item => (item.day || '').slice(5));
+            const values = trend.map(item => item.count || 0);
+            const hasData = values.some(value => value > 0);
+
+            if (window.Chart) {
+                box.hidden = true;
+                document.getElementById('trend-canvas-box').hidden = false;
+                if (trendChart) trendChart.destroy();
+                trendChart = new Chart(document.getElementById('trend-chart'), {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [{
+                            label: '崩溃次数',
+                            data: values,
+                            borderColor: '#2ecc71',
+                            backgroundColor: 'rgba(46, 204, 113, 0.12)',
+                            fill: true,
+                            tension: 0.3
+                        }]
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                    }
+                });
+            } else if (hasData) {
+                document.getElementById('trend-canvas-box').hidden = true;
+                box.hidden = false;
+                const max = Math.max(...values, 1);
+                box.innerHTML = trend.map(item => (
+                    `<div class="trend-bar" title="${esc(item.day)}: ${item.count}" style="height:${Math.round((item.count / max) * 100)}%"></div>`
+                )).join('');
+            } else {
+                document.getElementById('trend-canvas-box').hidden = true;
+                box.hidden = false;
+                box.innerHTML = '<div class="muted">所选时间范围内暂无崩溃记录</div>';
+            }
+        }
+
+        function renderVersionChart(distribution) {
+            const box = document.getElementById('version-box');
+            if (versionChart) { versionChart.destroy(); versionChart = null; }
+            if (!distribution.length) {
+                box.innerHTML = '<div class="empty">暂无版本数据</div>';
+                return;
+            }
+            if (!window.Chart) {
+                const max = Math.max(...distribution.map(item => item.count || 0), 1);
+                box.innerHTML = `<div class="version-list">${distribution.map(item => `
+                    <div class="version-row">
+                        <div class="muted">${esc(item.version || '未知版本')}</div>
+                        <div class="version-track"><div class="version-fill" style="width:${Math.round((item.count / max) * 100)}%"></div></div>
+                        <div class="version-count">${fmtNumber(item.count)}</div>
+                    </div>`).join('')}</div>`;
+                return;
+            }
+            box.innerHTML = '<canvas id="version-chart"></canvas>';
+            versionChart = new Chart(document.getElementById('version-chart'), {
+                type: 'doughnut',
+                data: {
+                    labels: distribution.map(item => item.version || '未知版本'),
+                    datasets: [{
+                        data: distribution.map(item => item.count),
+                        backgroundColor: ['#3498db', '#2ecc71', '#f1c40f', '#e74c3c', '#9b59b6', '#1abc9c']
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+        }
+
+        function renderFingerprints(fingerprints, map) {
+            const body = document.getElementById('fingerprint-body');
+            if (!fingerprints.length) {
+                body.innerHTML = '<tr><td colspan="7" class="empty">暂无指纹数据</td></tr>';
+                return;
+            }
+            const authorQuery = map.map_hash
+                ? `/author?hash=${encodeURIComponent(map.map_hash)}&map=${encodeURIComponent(map.map_name || '')}`
+                : `/author?map=${encodeURIComponent(map.map_name || '')}`;
+            body.innerHTML = fingerprints.map(fp => {
+                const annotation = fp.annotation
+                    ? `<div class="annotation-text">${esc(fp.annotation)}</div>
+                       <div class="muted">${esc(fp.annotation_source || '')}${fp.annotation_confidence != null ? ' · 置信度 ' + Math.round(fp.annotation_confidence * 100) + '%' : ''}${fp.annotator ? ' · ' + esc(fp.annotator) : ''}</div>`
+                    : '<span class="muted">—</span>';
+                const module = [fp.module, fp.relative_offset].filter(Boolean).join(' ');
+                return `<tr>
+                    <td><a class="map-link" href="${authorQuery}"><code class="badge badge-info">${esc(fp.fingerprint)}</code></a></td>
+                    <td>${esc(fp.game_version || '—')}</td>
+                    <td>${esc(module || '—')}</td>
+                    <td><span class="badge badge-danger">${fmtNumber(fp.occurrence)}</span></td>
+                    <td>${esc(fp.attribution || '—')}</td>
+                    <td>${annotation}</td>
+                    <td class="muted">${esc(fp.last_seen || '—')}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        document.getElementById('days-select').addEventListener('change', event => {
+            loadMap(event.target.value);
+        });
+
+        if (!mapKey) {
+            showError('缺少地图标识，请从地图看板进入。');
+        } else {
+            const initialDays = new URLSearchParams(location.search).get('days') || '30';
+            document.getElementById('days-select').value = initialDays;
+            loadMap(initialDays);
+        }
+    </script>
+</body>
+</html>

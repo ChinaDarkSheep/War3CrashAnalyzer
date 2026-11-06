@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🗺️ 地图看板 - 魔兽崩溃分析</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+            overflow-x: auto;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 18px; margin-bottom: 25px; }
+        .stat-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .stat-label { color: #888; font-size: 0.85em; margin-bottom: 8px; }
+        .stat-value { font-size: 2rem; font-weight: 700; color: var(--dark); }
+        .stat-value.accent { color: var(--primary); }
+        .filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
+        .filter-bar input, .filter-bar select {
+            padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px;
+            outline: none; font-size: 0.92em; background: white;
+        }
+        .filter-bar input[type="text"] { min-width: 220px; }
+        .filter-bar input:focus, .filter-bar select:focus { border-color: var(--primary); }
+        .filter-bar button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.92em;
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .map-link { color: var(--dark); font-weight: 600; text-decoration: none; }
+        .map-link:hover { color: var(--primary); text-decoration: underline; }
+        .muted { color: #888; font-size: 0.88em; }
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-weight: bold; white-space: nowrap; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: var(--primary); border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .badge-muted { background: #f1f2f6; color: #636e72; border: 1px solid #e2e6ea; }
+        .chart-container { position: relative; height: 260px; }
+        .fallback-bars { display: flex; flex-direction: column; gap: 10px; }
+        .fallback-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 60px; gap: 10px; align-items: center; font-size: 0.9em; }
+        .fallback-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; }
+        .fallback-track { background: #eef1f4; border-radius: 4px; height: 12px; overflow: hidden; }
+        .fallback-fill { background: var(--primary); height: 100%; border-radius: 4px; }
+        .fallback-count { text-align: right; font-weight: 600; color: var(--dark); }
+        .pager { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+        .pager button {
+            padding: 8px 16px; border: 1px solid #dfe6e9; border-radius: 6px;
+            background: white; cursor: pointer; color: var(--dark);
+        }
+        .pager button:disabled { opacity: 0.45; cursor: default; }
+        .empty { text-align: center; color: #999; padding: 26px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🗺️ 地图看板</h1>
+            <p>按地图身份汇总崩溃次数、指纹数量与近期趋势；地图哈希优先于地图名</p>
+            <p style="margin-top:-8px;font-size:0.85em;color:#bdc9d6;">无地图名且无哈希的日志仍计入总览与实时诊断流，但无法归入地图看板</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+            <a class="nav-link" href="/upload">📤 上传日志</a>
+            <a class="nav-link" href="/download">⬇️ 下载客户端</a>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">收录地图</div>
+                <div class="stat-value" id="stat-maps">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">累计崩溃</div>
+                <div class="stat-value accent" id="stat-total">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">已填写作者</div>
+                <div class="stat-value" id="stat-author">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最近 7 天</div>
+                <div class="stat-value" id="stat-recent">—</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📈 崩溃次数 Top 10</h2>
+            <div class="chart-container">
+                <canvas id="maps-chart"></canvas>
+            </div>
+            <div id="chart-empty" class="empty" hidden>暂无足够数据绘制图表</div>
+        </div>
+
+        <div class="card">
+            <h2>📋 地图列表</h2>
+            <div class="filter-bar">
+                <input type="text" id="q-input" placeholder="🔍 搜索地图名或作者">
+                <select id="version-select">
+                    <option value="">全部版本</option>
+                </select>
+                <select id="days-select">
+                    <option value="0">全部时间</option>
+                    <option value="7">最近 7 天</option>
+                    <option value="30">最近 30 天</option>
+                    <option value="90">最近 90 天</option>
+                </select>
+                <select id="sort-select">
+                    <option value="occurrence">按崩溃次数</option>
+                    <option value="fingerprints">按指纹数量</option>
+                    <option value="recent">按最近出现</option>
+                    <option value="name">按地图名</option>
+                </select>
+                <button id="query-btn">筛选</button>
+            </div>
+            <p id="list-status" class="muted"></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>地图</th>
+                        <th style="width: 90px;">崩溃</th>
+                        <th style="width: 90px;">指纹</th>
+                        <th style="width: 130px;">版本</th>
+                        <th style="width: 210px;">首要指纹</th>
+                        <th style="width: 150px;">最近出现</th>
+                    </tr>
+                </thead>
+                <tbody id="map-body"></tbody>
+            </table>
+            <div class="pager">
+                <button id="prev-btn">上一页</button>
+                <span id="page-info" class="muted"></span>
+                <button id="next-btn">下一页</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PAGE_SIZE = 30;
+        let mapChart = null;
+        let offset = 0;
+        let totalMaps = 0;
+
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function fmtNumber(value) {
+            return Number(value || 0).toLocaleString('zh-CN');
+        }
+
+        function fmtDate(value) {
+            return value ? esc(value) : '—';
+        }
+
+        function currentQuery() {
+            const params = new URLSearchParams();
+            const q = document.getElementById('q-input').value.trim();
+            const version = document.getElementById('version-select').value;
+            const days = document.getElementById('days-select').value;
+            const sort = document.getElementById('sort-select').value;
+            if (q) params.set('q', q);
+            if (version) params.set('version', version);
+            if (days && days !== '0') params.set('days', days);
+            if (sort) params.set('sort', sort);
+            params.set('limit', PAGE_SIZE);
+            params.set('offset', offset);
+            return params;
+        }
+
+        function syncUrl(params) {
+            const next = new URLSearchParams(params);
+            next.delete('limit');
+            const query = next.toString();
+            history.replaceState(null, '', query ? `/maps?${query}` : '/maps');
+        }
+
+        async function fetchMaps() {
+            const params = currentQuery();
+            const status = document.getElementById('list-status');
+            status.textContent = '加载中…';
+            try {
+                const res = await fetch(`/api/maps?${params.toString()}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const summary = data.summary || {};
+                totalMaps = summary.map_count || 0;
+
+                document.getElementById('stat-maps').textContent = fmtNumber(summary.map_count);
+                document.getElementById('stat-total').textContent = fmtNumber(summary.total_occurrence);
+                document.getElementById('stat-author').textContent = fmtNumber(summary.author_occurrence);
+                document.getElementById('stat-recent').textContent = fmtNumber(summary.recent_occurrence);
+
+                status.textContent = totalMaps
+                    ? `共 ${fmtNumber(totalMaps)} 张地图，当前第 ${offset + 1}–${Math.min(offset + PAGE_SIZE, totalMaps)} 张`
+                    : '没有符合条件的地图';
+
+                renderTable(data.maps || []);
+                renderChart(data.maps || []);
+                renderVersions(data.versions || []);
+                renderPager();
+                syncUrl(params);
+            } catch (e) {
+                status.textContent = `加载失败：${e.message}`;
+                status.style.color = '#e74c3c';
+            }
+        }
+
+        function renderTable(maps) {
+            const body = document.getElementById('map-body');
+            if (!maps.length) {
+                body.innerHTML = '<tr><td colspan="6" class="empty">暂无地图数据</td></tr>';
+                return;
+            }
+            body.innerHTML = maps.map(m => {
+                const fp = m.top_fingerprint || {};
+                const versions = (m.versions || []).length
+                    ? (m.versions || []).map(v => `<span class="badge badge-muted">${esc(v)}</span>`).join(' ')
+                    : '<span class="muted">—</span>';
+                const fpText = fp.fingerprint
+                    ? `<code class="badge badge-info">${esc(fp.fingerprint)}</code>
+                       <div class="muted">${esc([fp.module, fp.relative_offset].filter(Boolean).join(' ') || '—')}</div>`
+                    : '<span class="muted">—</span>';
+                const author = m.map_author
+                    ? `<div class="muted">作者 ${esc(m.map_author)}</div>` : '';
+                const annotation = m.annotation_count
+                    ? ` <span class="badge badge-success">已标注 ${esc(m.annotation_count)}</span>` : '';
+                return `<tr>
+                    <td>
+                        <a class="map-link" href="/map?key=${encodeURIComponent(m.map_key)}">${esc(m.map_name || '未命名地图')}</a>
+                        ${author}${annotation}
+                    </td>
+                    <td><span class="badge badge-danger">${fmtNumber(m.occurrence)}</span></td>
+                    <td>${fmtNumber(m.fingerprint_count)}</td>
+                    <td>${versions}</td>
+                    <td>${fpText}</td>
+                    <td class="muted">${fmtDate(m.last_seen)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderChart(maps) {
+            const box = document.getElementById('chart-empty');
+            if (!maps.length) {
+                box.hidden = false;
+                box.textContent = '暂无可绘制的数据';
+                return;
+            }
+            if (!window.Chart) {
+                const top = maps.slice(0, 10);
+                const max = Math.max(...top.map(m => m.occurrence || 0), 1);
+                box.hidden = false;
+                box.innerHTML = `<div class="fallback-bars">${top.map(m => `
+                    <div class="fallback-row">
+                        <div class="fallback-label" title="${esc(m.map_name)}">${esc(m.map_name || '未命名地图')}</div>
+                        <div class="fallback-track"><div class="fallback-fill" style="width:${Math.round((m.occurrence / max) * 100)}%"></div></div>
+                        <div class="fallback-count">${fmtNumber(m.occurrence)}</div>
+                    </div>`).join('')}</div>`;
+                return;
+            }
+            box.hidden = true;
+            const top = maps.slice(0, 10);
+            if (mapChart) mapChart.destroy();
+            mapChart = new Chart(document.getElementById('maps-chart'), {
+                type: 'bar',
+                data: {
+                    labels: top.map(m => m.map_name || '未命名地图'),
+                    datasets: [{
+                        label: '崩溃次数',
+                        data: top.map(m => m.occurrence),
+                        backgroundColor: '#3498db'
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+                }
+            });
+        }
+
+        function renderPager() {
+            const page = Math.floor(offset / PAGE_SIZE) + 1;
+            const pages = Math.max(1, Math.ceil(totalMaps / PAGE_SIZE));
+            document.getElementById('page-info').textContent = `第 ${page} / ${pages} 页`;
+            document.getElementById('prev-btn').disabled = offset <= 0;
+            document.getElementById('next-btn').disabled = offset + PAGE_SIZE >= totalMaps;
+        }
+
+        function renderVersions(versions) {
+            const select = document.getElementById('version-select');
+            const current = select.value;
+            [...select.querySelectorAll('option:not([value=""])')].forEach(opt => opt.remove());
+            versions.forEach(v => {
+                const option = document.createElement('option');
+                option.value = v;
+                option.textContent = v;
+                select.appendChild(option);
+            });
+            if (current) select.value = current;
+        }
+
+        function applyUrlParams() {
+            const params = new URLSearchParams(location.search);
+            if (params.has('q')) document.getElementById('q-input').value = params.get('q');
+            if (params.has('days')) document.getElementById('days-select').value = params.get('days');
+            if (params.has('sort')) document.getElementById('sort-select').value = params.get('sort');
+            if (params.has('version')) {
+                const select = document.getElementById('version-select');
+                const option = document.createElement('option');
+                option.value = params.get('version');
+                option.textContent = params.get('version');
+                select.appendChild(option);
+                select.value = params.get('version');
+            }
+            offset = Math.max(0, parseInt(params.get('offset') || '0', 10) || 0);
+        }
+
+        document.getElementById('query-btn').addEventListener('click', () => {
+            offset = 0;
+            fetchMaps();
+        });
+        document.getElementById('q-input').addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                offset = 0;
+                fetchMaps();
+            }
+        });
+        document.getElementById('prev-btn').addEventListener('click', () => {
+            offset = Math.max(0, offset - PAGE_SIZE);
+            fetchMaps();
+        });
+        document.getElementById('next-btn').addEventListener('click', () => {
+            offset += PAGE_SIZE;
+            fetchMaps();
+        });
+
+        applyUrlParams();
+        fetchMaps();
+    </script>
+</body>
+</html>

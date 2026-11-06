@@ -64,13 +64,26 @@ _WIN_ABS_PATH = re.compile(
 
 
 def _public_map_name(value):
-    """公开页展示用：旧数据里的 ``.w3m`` 视为 WorldEdit 测试地图。"""
-    text = _text(value, 160)
-    if not text or text.lower() in _EMPTY_MAP_NAMES:
-        if text and text.startswith('.'):
+    """公开页展示用：去路径，旧数据里的 ``.w3m`` 视为 WorldEdit 测试地图。"""
+    text = _clean_map_field(value, 160)
+    if text:
+        return text
+    raw = _text(value, 160)
+    if raw:
+        name = raw.replace('/', '\\').rsplit('\\', 1)[-1].strip()
+        if name.lower() in _EMPTY_MAP_NAMES and name.startswith('.'):
             return "WorldEdit 测试地图"
-        return None
-    return text
+    return None
+
+
+def _map_display_name(name, map_hash=None):
+    """看板展示名：纯 MD5 文件名转成可读占位，其余保留友好名称。"""
+    hash_name = _map_hash_from_name(name)
+    display = _public_map_name(name)
+    if hash_name or not display:
+        digest = (map_hash or hash_name or "")[:8].upper()
+        return f"未命名地图 · {digest}" if digest else "未命名地图"
+    return display
 
 
 def _clean_map_field(value, limit=120, strip_path=True):
@@ -116,6 +129,23 @@ def _map_names_match(left, right):
     a = _MAP_VERSION_SUFFIX.sub('', a).strip(' _-')
     b = _MAP_VERSION_SUFFIX.sub('', b).strip(' _-')
     return bool(a) and a == b
+
+
+def _preferred_map_name(current, candidate):
+    """聚合去重时优先保留友好地图名，旧 MD5 文件名与占位名可被替换。"""
+    current_clean = _clean_map_field(current)
+    candidate_clean = _clean_map_field(candidate)
+    if not candidate_clean:
+        return current_clean
+    if not current_clean:
+        return candidate_clean
+    current_weak = (_is_weak_map_name(current_clean)
+                    or bool(_map_hash_from_name(current_clean)))
+    candidate_weak = (_is_weak_map_name(candidate_clean)
+                      or bool(_map_hash_from_name(candidate_clean)))
+    if current_weak and not candidate_weak:
+        return candidate_clean
+    return current_clean
 
 
 def _resolve_map_identity(crash_name, kk_name, client_name=None, client_author=None,

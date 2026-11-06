@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📊 数据质量总览 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.2rem; margin-bottom: 18px; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .query-row input[type="password"] {
+            padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px;
+            outline: none; font-size: 0.92em; background: white; min-width: 300px;
+        }
+        .query-row input:focus { border-color: var(--primary); }
+        button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.92em;
+        }
+        button:disabled { background: #b2bec3; cursor: not-allowed; }
+        button.ghost { background: white; color: #636e72; border: 1px solid #dfe6e9; }
+        button.range.active { background: var(--dark); color: white; border-color: var(--dark); }
+        .alert { display: none; margin-top: 10px; padding: 10px 14px; border-radius: 6px; font-size: 0.9em; background: #e0f2fe; color: #0369a1; }
+        .alert.show { display: block; }
+        .alert.error { background: #fee2e2; color: #b91c1c; }
+        .muted { color: #888; font-size: 0.86em; }
+        .mono { font-family: Consolas, 'Courier New', monospace; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+        .metric { background: #f8f9fa; border-radius: 10px; padding: 15px 16px; border-left: 4px solid var(--primary); }
+        .metric-label { color: #7a8794; font-size: 0.8em; margin-bottom: 6px; }
+        .metric-value { font-size: 1.55em; font-weight: bold; color: var(--dark); line-height: 1.2; }
+        .metric-hint { color: #95a2ad; font-size: 0.76em; margin-top: 5px; }
+        .badge { padding: 3px 9px; border-radius: 6px; font-size: 0.78em; font-weight: bold; white-space: nowrap; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+        .badge-warning { background-color: #fef9c3; color: #a16207; border: 1px solid #fde68a; }
+        .badge-muted { background-color: #f1f2f6; color: #636e72; border: 1px solid #dfe6e9; }
+        .issue-list { display: flex; flex-direction: column; gap: 10px; }
+        .issue { display: flex; gap: 12px; align-items: flex-start; background: #f8f9fa; border-radius: 8px; padding: 12px 14px; }
+        .issue .issue-body { flex: 1; }
+        .issue .issue-title { font-weight: 600; margin-bottom: 3px; }
+        .issue .issue-detail { color: #666; font-size: 0.86em; line-height: 1.5; }
+        .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+        .trend { display: flex; align-items: flex-end; gap: 4px; min-height: 150px; overflow-x: auto; padding-bottom: 4px; }
+        .trend-day { flex: 0 0 20px; display: flex; flex-direction: column; align-items: center; height: 150px; }
+        .trend-bars { display: flex; align-items: flex-end; justify-content: center; gap: 2px; height: 122px; width: 100%; }
+        .trend-bar { width: 6px; border-radius: 2px 2px 0 0; background: #dbe4ea; }
+        .trend-bar.upload { background: var(--primary); }
+        .trend-bar.report { background: var(--danger); }
+        .trend-label { font-size: 0.66em; color: #95a2ad; margin-top: 4px; white-space: nowrap; }
+        .legend { display: flex; gap: 16px; margin-bottom: 10px; font-size: 0.82em; color: #666; }
+        .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+        .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+        .chip { background: #f8f9fa; border: 1px solid #e8edf1; border-radius: 20px; padding: 7px 14px; font-size: 0.88em; }
+        .chip b { margin-left: 4px; color: var(--dark); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: top; font-size: 0.88em; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .table-wrap { overflow-x: auto; }
+        .table-wrap table { min-width: 900px; }
+        td a { color: var(--primary); text-decoration: none; }
+        td a:hover { text-decoration: underline; }
+        .empty { text-align: center; color: #999; padding: 22px; }
+        .dist-row { display: grid; grid-template-columns: 130px 1fr 46px; gap: 10px; align-items: center; margin-bottom: 9px; font-size: 0.86em; }
+        .dist-track { background: #eef2f5; border-radius: 4px; height: 10px; overflow: hidden; }
+        .dist-fill { height: 100%; background: var(--primary); border-radius: 4px; }
+        .dist-count { text-align: right; color: #666; }
+        .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+        .section-head h2 { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 数据质量总览</h1>
+            <p>维护者视角：观察上传入库、地图身份、作者与指纹覆盖、反馈队列与聚合 Top</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/admin/uploads">🔐 上传管理</a>
+            <a class="nav-link" href="/admin/cases">🧩 案例合并</a>
+            <a class="nav-link" href="/admin/download">⬇️ 下载入口</a>
+        </header>
+
+        <div class="card" id="auth-card">
+            <h2>管理令牌</h2>
+            <div class="query-row">
+                <input type="password" id="token-input" placeholder="WAR3_ADMIN_TOKEN" autocomplete="off">
+                <button id="token-btn">进入管理</button>
+                <button id="token-clear" class="ghost">清除令牌</button>
+            </div>
+            <p class="muted">令牌只保存在当前浏览器的 sessionStorage，关闭标签页即失效。服务端需设置 WAR3_ADMIN_TOKEN，否则管理端返回 503。</p>
+            <div class="alert" id="auth-alert"></div>
+        </div>
+
+        <div id="main" hidden>
+            <div class="card">
+                <div class="query-row">
+                    <span class="muted">时间范围</span>
+                    <button class="ghost range" data-days="7">最近 7 天</button>
+                    <button class="ghost range active" data-days="30">最近 30 天</button>
+                    <button class="ghost range" data-days="90">最近 90 天</button>
+                    <button id="refresh-btn">刷新</button>
+                    <button id="logout-btn" class="ghost">更换令牌</button>
+                </div>
+                <p id="range-label" class="muted"></p>
+                <div class="alert" id="page-alert"></div>
+            </div>
+
+            <div class="card">
+                <h2>核心指标</h2>
+                <div class="metrics" id="metrics"></div>
+            </div>
+
+            <div class="card">
+                <h2>数据质量提示</h2>
+                <div class="issue-list" id="issues"></div>
+            </div>
+
+            <div class="card">
+                <div class="section-head">
+                    <h2>每日上传与入库</h2>
+                    <span class="muted" id="trend-caption"></span>
+                </div>
+                <div class="legend">
+                    <span><span class="dot" style="background:#3498db"></span>上传</span>
+                    <span><span class="dot" style="background:#e74c3c"></span>入库崩溃</span>
+                </div>
+                <div class="trend" id="trend"></div>
+            </div>
+
+            <div class="card">
+                <h2>反馈队列</h2>
+                <div class="chips" id="feedback"></div>
+                <p class="muted" style="margin-bottom:0">提示：待处理与需补充材料的记录会直接显示在提交者的上传码状态页。</p>
+            </div>
+
+            <div class="card">
+                <h2>崩溃最多的地图</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:320px;">地图</th>
+                                <th style="width:80px;">崩溃</th>
+                                <th style="width:80px;">指纹</th>
+                                <th style="width:150px;">版本</th>
+                                <th style="width:250px;">首要指纹</th>
+                                <th style="width:120px;">标注</th>
+                                <th style="width:150px;">最近出现</th>
+                            </tr>
+                        </thead>
+                        <tbody id="map-rows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>跨地图高频指纹</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:130px;">指纹</th>
+                                <th style="width:100px;">影响地图</th>
+                                <th style="width:80px;">次数</th>
+                                <th style="width:220px;">模块 / 偏移</th>
+                                <th style="width:150px;">归属</th>
+                                <th style="width:240px;">代表地图</th>
+                                <th style="width:150px;">最近出现</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fingerprint-rows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card" style="margin-bottom:0;">
+                    <h2>归属分布</h2>
+                    <div id="attribution-dist"></div>
+                </div>
+                <div class="card" style="margin-bottom:0;">
+                    <h2>版本分布</h2>
+                    <div id="version-dist"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TOKEN_KEY = 'war3_admin_token';
+        const state = {
+            token: sessionStorage.getItem(TOKEN_KEY) || '',
+            days: 30
+        };
+
+        const $ = (id) => document.getElementById(id);
+
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function num(value) {
+            return Number(value || 0).toLocaleString('zh-CN');
+        }
+
+        function pct(value) {
+            return value == null ? '—' : (Math.round(value * 1000) / 10) + '%';
+        }
+
+        function showAlert(id, message, isError) {
+            const box = $(id);
+            box.textContent = message || '';
+            box.className = 'alert' + (message ? ' show' : '') + (isError ? ' error' : '');
+        }
+
+        function attributionBadge(value) {
+            if (!value) return '<span class="badge badge-muted">未判定</span>';
+            const cls = value === '地图' ? 'badge-danger'
+                : value === '编辑器' ? 'badge-warning'
+                : value === '本机环境或对战平台' ? 'badge-info' : 'badge-muted';
+            return `<span class="badge ${cls}">${esc(value)}</span>`;
+        }
+
+        function mapLink(key, name) {
+            if (!key) return esc(name || '未命名地图');
+            return `<a href="/map?key=${encodeURIComponent(key)}">${esc(name || key)}</a>`;
+        }
+
+        async function api(path) {
+            const response = await fetch(path, {
+                headers: { 'X-Admin-Token': state.token }
+            });
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (err) {
+                data = null;
+            }
+            if (!response.ok) {
+                const error = new Error((data && data.message) || `请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        }
+
+        function metricCard(label, value, hint) {
+            return `<div class="metric">
+                <div class="metric-label">${esc(label)}</div>
+                <div class="metric-value">${value}</div>
+                <div class="metric-hint">${esc(hint || '')}</div>
+            </div>`;
+        }
+
+        function renderSummary(data) {
+            const s = data.summary;
+            const q = data.quality;
+            $('metrics').innerHTML = [
+                metricCard('上传数', num(s.uploads),
+                    `崩溃区 ${num(s.crash_uploads)} · 平台区 ${num(s.kk_uploads)}`),
+                metricCard('入库崩溃', num(s.reports),
+                    `网页上传 ${num(s.uploaded_reports)} 条`),
+                metricCard('入库率', pct(s.ingest_rate),
+                    `崩溃类上传 ${num(s.ingested_uploads)}/${num(s.crash_uploads)}`),
+                metricCard('地图身份', pct(s.identity_rate),
+                    `缺失 ${num(q.missing_identity)} 条`),
+                metricCard('作者填写', pct(s.author_rate),
+                    `缺失 ${num(q.missing_author)} 条`),
+                metricCard('指纹覆盖', pct(s.fingerprint_rate),
+                    `缺失 ${num(q.missing_fingerprint)} 条`),
+                metricCard('待处理反馈', num(s.pending_feedback),
+                    `原始文件可用 ${num(s.raw_available)} 个 · 保留 ${num(s.retention_days)} 天`)
+            ].join('');
+        }
+
+        function renderIssues(issues) {
+            if (!issues.length) {
+                $('issues').innerHTML = '<div class="empty">暂无质量提示</div>';
+                return;
+            }
+            const cls = { warn: 'badge-warning', info: 'badge-info', ok: 'badge-success' };
+            $('issues').innerHTML = issues.map((item) => `
+                <div class="issue">
+                    <span class="badge ${cls[item.level] || 'badge-muted'}">${
+                        item.level === 'warn' ? '需要处理' : item.level === 'ok' ? '正常' : '提示'
+                    }</span>
+                    <div class="issue-body">
+                        <div class="issue-title">${esc(item.title)}</div>
+                        <div class="issue-detail">${esc(item.detail)}</div>
+                    </div>
+                </div>`).join('');
+        }
+
+        function renderTrend(trend) {
+            const max = Math.max(1, ...trend.map((d) => Math.max(d.uploads, d.reports)));
+            $('trend').innerHTML = trend.map((day) => {
+                const upload = Math.max(2, Math.round(day.uploads / max * 100));
+                const report = Math.max(2, Math.round(day.reports / max * 100));
+                return `<div class="trend-day" title="${esc(day.day)}：上传 ${day.uploads} / 入库 ${day.reports}">
+                    <div class="trend-bars">
+                        <div class="trend-bar upload" style="height:${upload}%"></div>
+                        <div class="trend-bar report" style="height:${report}%"></div>
+                    </div>
+                    <div class="trend-label">${esc(day.day.slice(5))}</div>
+                </div>`;
+            }).join('');
+            $('trend-caption').textContent = `共 ${trend.length} 天`;
+        }
+
+        function renderFeedback(items) {
+            const cls = {
+                pending: 'badge-muted', reviewing: 'badge-info',
+                resolved: 'badge-success', need_info: 'badge-warning'
+            };
+            $('feedback').innerHTML = items.map((item) =>
+                `<span class="chip">${esc(item.label)} <b>${num(item.count)}</b>
+                    <span class="badge ${cls[item.status] || 'badge-muted'}">${esc(item.status)}</span>
+                </span>`).join('');
+        }
+
+        function renderMaps(items) {
+            if (!items.length) {
+                $('map-rows').innerHTML = '<tr><td colspan="7" class="empty">范围内暂无聚合地图</td></tr>';
+                return;
+            }
+            $('map-rows').innerHTML = items.map((item) => {
+                const top = item.top_fingerprint;
+                const topText = top
+                    ? `<span class="mono">${esc(top.fingerprint || '—')}</span>
+                       <div class="muted">${esc(top.module || '—')} ${esc(top.relative_offset || '')}</div>`
+                    : '—';
+                return `<tr>
+                    <td>${mapLink(item.map_key, item.map_name)}
+                        ${item.map_author ? `<div class="muted">作者：${esc(item.map_author)}</div>` : ''}</td>
+                    <td>${num(item.occurrence)}</td>
+                    <td>${num(item.fingerprint_count)}</td>
+                    <td>${esc((item.versions || []).join(' / ') || '—')}</td>
+                    <td>${topText}</td>
+                    <td>${item.annotation_count ? `<span class="badge badge-success">${num(item.annotation_count)}</span>` : '<span class="badge badge-muted">0</span>'}</td>
+                    <td class="muted">${esc(item.last_seen || '—')}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderFingerprints(items) {
+            if (!items.length) {
+                $('fingerprint-rows').innerHTML = '<tr><td colspan="7" class="empty">范围内暂无指纹聚合</td></tr>';
+                return;
+            }
+            $('fingerprint-rows').innerHTML = items.map((item) => {
+                const mapCount = item.map_count > 1
+                    ? `<span class="badge badge-danger">${num(item.map_count)}</span>`
+                    : `<span class="badge badge-muted">${num(item.map_count)}</span>`;
+                const location = [item.module, item.relative_offset]
+                    .filter(Boolean).join(' · ') || '—';
+                return `<tr>
+                    <td class="mono">${esc(item.fingerprint || '—')}</td>
+                    <td>${mapCount}</td>
+                    <td>${num(item.occurrence)}</td>
+                    <td class="mono">${esc(location)}</td>
+                    <td>${attributionBadge(item.attribution)}</td>
+                    <td>${mapLink(item.sample_map_key, item.sample_map_name)}</td>
+                    <td class="muted">${esc(item.last_seen || '—')}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderDistribution(id, items, key) {
+            if (!items.length) {
+                $(id).innerHTML = '<div class="empty">暂无数据</div>';
+                return;
+            }
+            const max = Math.max(1, ...items.map((item) => item.count));
+            $(id).innerHTML = items.map((item) => `
+                <div class="dist-row">
+                    <div title="${esc(item[key])}">${esc(item[key])}</div>
+                    <div class="dist-track"><div class="dist-fill" style="width:${Math.round(item.count / max * 100)}%"></div></div>
+                    <div class="dist-count">${num(item.count)}</div>
+                </div>`).join('');
+        }
+
+        function render(data) {
+            const range = data.range;
+            $('range-label').textContent =
+                `${range.since} 至 ${range.until}（${range.days} 天） · 生成于 ${data.generated_at}`;
+            renderSummary(data);
+            renderIssues(data.issues || []);
+            renderTrend(data.trend || []);
+            renderFeedback(data.feedback || []);
+            renderMaps(data.top_maps || []);
+            renderFingerprints(data.top_fingerprints || []);
+            renderDistribution('attribution-dist', data.attributions || [], 'attribution');
+            renderDistribution('version-dist', data.versions || [], 'version');
+        }
+
+        async function load() {
+            showAlert('page-alert', '', false);
+            try {
+                const data = await api(`/api/admin/overview?days=${state.days}`);
+                render(data);
+                $('main').hidden = false;
+                $('auth-card').hidden = true;
+            } catch (error) {
+                if (error.status === 403 || error.status === 503) {
+                    $('main').hidden = true;
+                    $('auth-card').hidden = false;
+                    showAlert('auth-alert',
+                        error.status === 503 ? '服务端未设置 WAR3_ADMIN_TOKEN，管理端已禁用' : error.message,
+                        true);
+                } else {
+                    showAlert('page-alert', error.message, true);
+                }
+            }
+        }
+
+        $('token-btn').addEventListener('click', async () => {
+            const value = $('token-input').value.trim();
+            if (!value) {
+                showAlert('auth-alert', '请先填写管理令牌', true);
+                return;
+            }
+            state.token = value;
+            sessionStorage.setItem(TOKEN_KEY, value);
+            await load();
+        });
+
+        $('token-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') $('token-btn').click();
+        });
+
+        $('token-clear').addEventListener('click', () => {
+            sessionStorage.removeItem(TOKEN_KEY);
+            state.token = '';
+            $('token-input').value = '';
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            showAlert('auth-alert', '令牌已清除', false);
+        });
+
+        $('logout-btn').addEventListener('click', () => {
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            $('token-input').value = state.token;
+        });
+
+        $('refresh-btn').addEventListener('click', load);
+
+        document.querySelectorAll('button.range').forEach((button) => {
+            button.addEventListener('click', () => {
+                state.days = Number(button.dataset.days) || 30;
+                document.querySelectorAll('button.range').forEach((item) => {
+                    item.classList.toggle('active', item === button);
+                });
+                load();
+            });
+        });
+
+        if (state.token) {
+            $('token-input').value = state.token;
+            load();
+        }
+    </script>
+</body>
+</html>

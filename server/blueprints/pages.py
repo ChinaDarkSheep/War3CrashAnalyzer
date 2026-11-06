@@ -15,6 +15,16 @@ def author_page():
     return send_from_directory(current_app.static_folder, 'author.html')
 
 
+@bp.route('/maps')
+def maps_page():
+    return send_from_directory(current_app.static_folder, 'maps.html')
+
+
+@bp.route('/map')
+def map_detail_page():
+    return send_from_directory(current_app.static_folder, 'map_detail.html')
+
+
 @bp.route('/upload')
 def upload_page():
     return send_from_directory(current_app.static_folder, 'upload.html')
@@ -33,6 +43,11 @@ def download_page():
 @bp.route('/admin/uploads')
 def admin_uploads_page():
     return send_from_directory(current_app.static_folder, 'admin_uploads.html')
+
+
+@bp.route('/admin/overview')
+def admin_overview_page():
+    return send_from_directory(current_app.static_folder, 'admin_overview.html')
 
 
 @bp.route('/admin/cases')

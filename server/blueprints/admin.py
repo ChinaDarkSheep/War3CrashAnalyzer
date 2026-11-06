@@ -7,11 +7,13 @@ import re
 import shutil
 import sqlite3
 import zipfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, jsonify, request, send_file
 
-from common import _parse_json, _resolve_map_identity
+from common import (
+    _clean_map_field, _map_display_name, _map_hash_from_name, _map_key,
+    _module, _parse_json, _preferred_map_name, _resolve_map_identity)
 from db import DB_PATH
 from diagnosis import _ingest_crash_records
 from download_store import DownloadConfigError, get_download, save_download
@@ -21,6 +23,7 @@ from settings import (
     ADMIN_TOKEN,
     FEEDBACK_NOTE_MAX,
     FEEDBACK_STATUSES,
+    RAW_RETENTION_DAYS,
     UPLOAD_ROOT,
 )
 from upload_store import (
@@ -86,6 +89,302 @@ def _admin_upload_row(code):
             "SELECT * FROM raw_uploads WHERE code = ?", (code,)).fetchone()
     finally:
         conn.close()
+
+
+_OVERVIEW_DAYS = (7, 30, 90)
+
+
+def _rate(numerator, denominator):
+    if not denominator:
+        return None
+    return round(numerator / denominator, 4)
+
+
+def _overview_issues(summary, quality):
+    """把数据质量问题翻译成维护者能直接行动的提示。"""
+    if not summary['reports']:
+        return [{
+            'level': 'info',
+            'title': '范围内暂无入库崩溃',
+            'detail': '换一个时间范围，或确认客户端上报与网页上传是否正常。',
+        }]
+
+    issues = []
+    if quality['missing_identity']:
+        issues.append({
+            'level': 'warn',
+            'title': f"{quality['missing_identity']} 条崩溃缺少地图身份",
+            'detail': '没有地图哈希也没有可用地图名，这些日志只计入总览与实时诊断流，无法进入地图看板。',
+        })
+    if quality['md5_names']:
+        issues.append({
+            'level': 'info',
+            'title': f"{quality['md5_names']} 条崩溃仍使用 MD5 文件名",
+            'detail': '客户端未读到真实地图名时先用 MD5 文件名占位，出现友好地图名后会自动替换。',
+        })
+    if quality['missing_fingerprint']:
+        issues.append({
+            'level': 'warn',
+            'title': f"{quality['missing_fingerprint']} 条崩溃没有栈指纹",
+            'detail': '缺少指纹的崩溃无法参与聚合排行，需检查调用栈解析与日志完整性。',
+        })
+    author_rate = summary['author_rate']
+    if author_rate is not None and author_rate < 0.5:
+        issues.append({
+            'level': 'warn',
+            'title': f"地图作者填写率仅 {int(author_rate * 100)}%",
+            'detail': '作者信息依赖客户端读取本地 w3x；玩家未选择地图或使用旧客户端时可能缺失。',
+        })
+    if summary['pending_feedback']:
+        issues.append({
+            'level': 'info',
+            'title': f"{summary['pending_feedback']} 个上传待反馈",
+            'detail': '在「上传管理」标记复核进度，提交者可通过上传码看到反馈。',
+        })
+    if not issues:
+        issues.append({
+            'level': 'ok',
+            'title': '数据质量正常',
+            'detail': '地图身份、作者、指纹与反馈队列均无待处理项。',
+        })
+    return issues
+
+
+@bp.route('/api/admin/overview', methods=['GET'])
+def admin_overview():
+    """维护者运营总览：上传量、入库率、数据质量、趋势与聚合 Top。"""
+    denied = _admin_denied()
+    if denied:
+        return denied
+
+    try:
+        days = int(request.args.get('days', 30))
+    except (TypeError, ValueError):
+        days = 30
+    if days not in _OVERVIEW_DAYS:
+        days = 30
+    since = f'-{days} days'
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        upload_row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(CASE WHEN has_crash = 1 THEN 1 ELSE 0 END), 0) AS crash_uploads, "
+            "COALESCE(SUM(CASE WHEN has_kk = 1 THEN 1 ELSE 0 END), 0) AS kk_uploads, "
+            "COALESCE(SUM(CASE WHEN COALESCE(report_count, 0) > 0 THEN 1 ELSE 0 END), 0) AS ingested, "
+            "COALESCE(SUM(CASE WHEN raw_deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS raw_available "
+            "FROM raw_uploads "
+            "WHERE date(created_at) >= date('now', 'localtime', ?)", (since,)).fetchone()
+
+        feedback_counts = {key: 0 for key in FEEDBACK_STATUSES}
+        for row in conn.execute(
+                "SELECT COALESCE(feedback_status, 'pending') AS status, "
+                "COUNT(*) AS count FROM raw_uploads "
+                "WHERE date(created_at) >= date('now', 'localtime', ?) "
+                "GROUP BY status", (since,)).fetchall():
+            status = row['status'] if row['status'] in feedback_counts else 'pending'
+            feedback_counts[status] += row['count']
+
+        report_rows = conn.execute(
+            "SELECT map_name, map_hash, map_author, fingerprint, upload_code, "
+            "attribution, game_version FROM crash_reports "
+            "WHERE date(timestamp) >= date('now', 'localtime', ?)",
+            (since,)).fetchall()
+        total_reports = len(report_rows)
+        with_identity = with_author = with_fingerprint = uploaded = 0
+        missing_identity = md5_names = missing_names = 0
+        attributions = {}
+        versions = {}
+        for row in report_rows:
+            map_name = row['map_name']
+            map_hash = ((row['map_hash'] or '').strip().lower()
+                        or _map_hash_from_name(map_name))
+            clean_name = _clean_map_field(map_name)
+            if map_hash or clean_name:
+                with_identity += 1
+            else:
+                missing_identity += 1
+            if _map_hash_from_name(map_name):
+                md5_names += 1
+            if not clean_name:
+                missing_names += 1
+            if _clean_map_field(row['map_author'], strip_path=False):
+                with_author += 1
+            if (row['fingerprint'] or '').strip():
+                with_fingerprint += 1
+            if (row['upload_code'] or '').strip():
+                uploaded += 1
+            attribution = (row['attribution'] or '').strip() or '未判定'
+            attributions[attribution] = attributions.get(attribution, 0) + 1
+            version = (row['game_version'] or '').strip() or '未知版本'
+            versions[version] = versions.get(version, 0) + 1
+
+        summary = {
+            'uploads': upload_row['total'],
+            'crash_uploads': upload_row['crash_uploads'],
+            'kk_uploads': upload_row['kk_uploads'],
+            'ingested_uploads': upload_row['ingested'],
+            'ingest_rate': _rate(upload_row['ingested'],
+                                 upload_row['crash_uploads']),
+            'reports': total_reports,
+            'identity_rate': _rate(with_identity, total_reports),
+            'author_rate': _rate(with_author, total_reports),
+            'fingerprint_rate': _rate(with_fingerprint, total_reports),
+            'uploaded_reports': uploaded,
+            'pending_feedback': feedback_counts['pending'],
+            'raw_available': upload_row['raw_available'],
+            'retention_days': RAW_RETENTION_DAYS,
+        }
+        quality = {
+            'missing_identity': missing_identity,
+            'missing_names': missing_names,
+            'md5_names': md5_names,
+            'missing_author': total_reports - with_author,
+            'missing_fingerprint': total_reports - with_fingerprint,
+        }
+
+        upload_days = {row['day']: row['count'] for row in conn.execute(
+            "SELECT date(created_at) AS day, COUNT(*) AS count FROM raw_uploads "
+            "WHERE date(created_at) >= date('now', 'localtime', ?) "
+            "GROUP BY day", (since,)).fetchall()}
+        report_days = {row['day']: row['count'] for row in conn.execute(
+            "SELECT date(timestamp) AS day, COUNT(*) AS count FROM crash_reports "
+            "WHERE date(timestamp) >= date('now', 'localtime', ?) "
+            "GROUP BY day", (since,)).fetchall()}
+        today = date.today()
+        trend = []
+        for offset in range(days - 1, -1, -1):
+            day = (today - timedelta(days=offset)).isoformat()
+            trend.append({
+                'day': day,
+                'uploads': upload_days.get(day, 0),
+                'reports': report_days.get(day, 0),
+            })
+
+        aggregate_rows = conn.execute(
+            "SELECT map_key, map_hash, map_name, map_author, fingerprint, module, "
+            "relative_offset, attribution, game_version, occurrence, annotation, "
+            "last_seen FROM crash_aggregates "
+            "WHERE date(last_seen) >= date('now', 'localtime', ?) "
+            "ORDER BY occurrence DESC, last_seen DESC", (since,)).fetchall()
+    finally:
+        conn.close()
+
+    map_groups = {}
+    fingerprint_groups = {}
+    for row in aggregate_rows:
+        key = row['map_key']
+        entry = map_groups.get(key)
+        if entry is None:
+            entry = {
+                'map_key': key,
+                'map_hash': (row['map_hash'] or '').lower() or None,
+                'map_name': None,
+                'map_author': None,
+                'occurrence': 0,
+                'fingerprint_count': 0,
+                'annotation_count': 0,
+                'versions': [],
+                'last_seen': None,
+                'top': None,
+            }
+            map_groups[key] = entry
+        entry['map_hash'] = (entry['map_hash']
+                             or (row['map_hash'] or '').lower() or None)
+        entry['map_name'] = _preferred_map_name(entry['map_name'], row['map_name'])
+        entry['map_author'] = entry['map_author'] or _clean_map_field(
+            row['map_author'], 80, strip_path=False)
+        entry['occurrence'] += row['occurrence']
+        entry['fingerprint_count'] += 1
+        if row['annotation']:
+            entry['annotation_count'] += 1
+        version = row['game_version']
+        if version and version not in entry['versions']:
+            entry['versions'].append(version)
+        if entry['top'] is None:
+            entry['top'] = row
+        entry['last_seen'] = max(entry['last_seen'] or '',
+                                 row['last_seen'] or '') or None
+
+        fingerprint = row['fingerprint']
+        fp_entry = fingerprint_groups.get(fingerprint)
+        if fp_entry is None:
+            fp_entry = {
+                'fingerprint': fingerprint,
+                'occurrence': 0,
+                'map_keys': set(),
+                'module': None,
+                'relative_offset': None,
+                'attribution': None,
+                'last_seen': None,
+                'sample_map_key': key,
+            }
+            fingerprint_groups[fingerprint] = fp_entry
+        fp_entry['occurrence'] += row['occurrence']
+        fp_entry['map_keys'].add(key)
+        fp_entry['module'] = fp_entry['module'] or row['module']
+        fp_entry['relative_offset'] = (fp_entry['relative_offset']
+                                       or row['relative_offset'])
+        fp_entry['attribution'] = fp_entry['attribution'] or row['attribution']
+        fp_entry['last_seen'] = max(fp_entry['last_seen'] or '',
+                                    row['last_seen'] or '') or None
+
+    top_maps = sorted(map_groups.values(),
+                      key=lambda item: item['occurrence'], reverse=True)[:8]
+    for item in top_maps:
+        item['map_name'] = _map_display_name(item['map_name'], item['map_hash'])
+        top = item.pop('top')
+        item['top_fingerprint'] = None
+        if top is not None:
+            item['top_fingerprint'] = {
+                'fingerprint': top['fingerprint'],
+                'module': _module(top['module']),
+                'relative_offset': top['relative_offset'],
+                'attribution': top['attribution'],
+                'occurrence': top['occurrence'],
+            }
+
+    top_fingerprints = sorted(
+        fingerprint_groups.values(),
+        key=lambda item: (item['occurrence'], len(item['map_keys'])),
+        reverse=True)[:10]
+    for item in top_fingerprints:
+        item['map_count'] = len(item.pop('map_keys'))
+        sample = map_groups.get(item.pop('sample_map_key'))
+        item['sample_map_name'] = (
+            _map_display_name(sample['map_name'], sample['map_hash'])
+            if sample else None)
+        item['module'] = _module(item['module'])
+
+    return jsonify({
+        'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'range': {
+            'days': days,
+            'since': (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
+            'until': datetime.now().strftime('%Y-%m-%d'),
+        },
+        'summary': summary,
+        'quality': quality,
+        'issues': _overview_issues(summary, quality),
+        'feedback': [
+            {'status': key, 'label': label, 'count': feedback_counts[key]}
+            for key, label in FEEDBACK_STATUSES.items()
+        ],
+        'trend': trend,
+        'top_maps': top_maps,
+        'top_fingerprints': top_fingerprints,
+        'attributions': [
+            {'attribution': key, 'count': value}
+            for key, value in sorted(attributions.items(),
+                                     key=lambda item: item[1], reverse=True)
+        ],
+        'versions': [
+            {'version': key, 'count': value}
+            for key, value in sorted(versions.items(),
+                                     key=lambda item: item[1], reverse=True)
+        ],
+    })
 
 
 def _upload_storage_root(code):

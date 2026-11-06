@@ -2,7 +2,8 @@
 
 import sqlite3
 
-from common import _aggregate_signature, _map_key
+from common import (
+    _aggregate_signature, _map_hash_from_name, _map_key, _preferred_map_name)
 from settings import DB_PATH, UPLOAD_DB_SCHEMA
 
 
@@ -75,6 +76,10 @@ def init_db():
               "ON crash_reports(fingerprint)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_reports_upload_code "
               "ON crash_reports(upload_code)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_aggregates_map_key "
+              "ON crash_aggregates(map_key)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_aggregates_last_seen "
+              "ON crash_aggregates(last_seen)")
 
     # P2.4 作者标注：根因 + 来源 / 置信度 / 标注人
     c.execute("PRAGMA table_info(crash_aggregates)")
@@ -171,12 +176,18 @@ def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
                       game_version, module, relative_offset, attribution,
                       timestamp, map_author=None):
     """新崩溃入库时累加聚合次数；同一日志只入库一次，所以不会重复计数。"""
+    map_hash = (map_hash or _map_hash_from_name(map_name) or "").lower() or None
     key = _map_key(map_hash, map_name)
     fp = (fingerprint or "").strip().upper()
     if not key or not fp:
         return
-    map_hash = map_hash.lower() if map_hash else None
     signature = _aggregate_signature(key, fp)
+    existing = c.execute(
+        "SELECT map_name, map_author FROM crash_aggregates WHERE signature = ?",
+        (signature,)).fetchone()
+    if existing:
+        map_name = _preferred_map_name(existing[0], map_name)
+        map_author = existing[1] or map_author
     c.execute('''INSERT INTO crash_aggregates
                  (signature, map_key, map_hash, map_name, map_author, fingerprint,
                   game_version, module, relative_offset, attribution,
@@ -187,8 +198,8 @@ def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
                   last_seen = excluded.last_seen,
                   last_report_id = excluded.last_report_id,
                   map_hash = COALESCE(crash_aggregates.map_hash, excluded.map_hash),
-                  map_name = COALESCE(crash_aggregates.map_name, excluded.map_name),
-                  map_author = COALESCE(crash_aggregates.map_author, excluded.map_author),
+                  map_name = excluded.map_name,
+                  map_author = excluded.map_author,
                   game_version = COALESCE(crash_aggregates.game_version, excluded.game_version),
                   module = COALESCE(crash_aggregates.module, excluded.module),
                   relative_offset = COALESCE(crash_aggregates.relative_offset, excluded.relative_offset),
@@ -222,7 +233,9 @@ def rebuild_aggregates(conn=None):
 
         aggregates = {}
         for row in rows:
-            key = _map_key(row["map_hash"], row["map_name"])
+            map_hash = (row["map_hash"] or _map_hash_from_name(row["map_name"])
+                        or "").lower() or None
+            key = _map_key(map_hash, row["map_name"])
             fp = (row["fingerprint"] or "").strip().upper()
             if not key or not fp:
                 continue
@@ -232,7 +245,7 @@ def rebuild_aggregates(conn=None):
                 entry = {
                     "signature": signature,
                     "map_key": key,
-                    "map_hash": (row["map_hash"] or "").lower() or None,
+                    "map_hash": map_hash,
                     "map_name": row["map_name"],
                     "map_author": row["map_author"],
                     "fingerprint": fp,
@@ -245,8 +258,12 @@ def rebuild_aggregates(conn=None):
                 }
                 aggregates[signature] = entry
             else:
-                for field in ("map_hash", "map_name", "map_author", "game_version",
-                              "module", "relative_offset", "attribution"):
+                entry["map_hash"] = entry["map_hash"] or map_hash
+                entry["map_name"] = _preferred_map_name(
+                    entry["map_name"], row["map_name"])
+                entry["map_author"] = entry["map_author"] or row["map_author"]
+                for field in ("game_version", "module",
+                              "relative_offset", "attribution"):
                     if not entry[field] and row[field]:
                         entry[field] = row[field]
             entry["occurrence"] += 1

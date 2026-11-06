@@ -79,6 +79,7 @@
             <h1>🧑‍💻 作者查询</h1>
             <p>选择地图文件（本地算 MD5，不上传）或输入地图名，查看该地图的崩溃指纹排行与脱敏样本</p>
             <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/maps">🗺️ 地图看板</a>
             <a class="nav-link" href="/upload">📤 上传日志</a>
             <a class="nav-link" href="/download">⬇️ 下载客户端</a>
         </header>
@@ -510,6 +511,15 @@
                 });
             })
             .catch(() => {});
+
+        const initialParams = new URLSearchParams(location.search);
+        const initialHash = (initialParams.get('hash') || '').trim().toLowerCase();
+        const initialName = (initialParams.get('map') || '').trim();
+        if (initialHash) document.getElementById('map-hash-input').value = initialHash;
+        if (initialName) document.getElementById('map-name-input').value = initialName;
+        if (/^[0-9a-f]{32}$/.test(initialHash) || initialName) {
+            query();
+        }
     </script>
 </body>
 </html>

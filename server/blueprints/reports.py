@@ -7,8 +7,9 @@ from flask import Blueprint, jsonify, request
 
 from common import (
     _attribution, _clean_dmp, _clean_map_field, _confidence, _fingerprint,
-    _frame_list, _map_hash, _module, _public_map_name, _public_text,
-    _stack_list, _text, get_content_hash, normalize_offset, normalize_version)
+    _frame_list, _map_display_name, _map_hash, _map_hash_from_name, _map_key,
+    _module, _preferred_map_name, _public_text, _stack_list, _text,
+    get_content_hash, normalize_offset, normalize_version)
 from db import DB_PATH, _upsert_aggregate, rebuild_aggregates
 from legacy_report import analyze_crash, extract_crash_info, extract_map_name
 
@@ -141,13 +142,29 @@ def get_stats():
 
     where_clause = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-    # Top crashing maps
-    c.execute("SELECT map_name, MAX(map_author) as map_author, COUNT(*) as count "
-              "FROM crash_reports GROUP BY map_name ORDER BY count DESC LIMIT 5")
-    top_maps = [{'map_name': _public_map_name(row['map_name']),
-                 'map_author': _clean_map_field(
-                     row['map_author'], 80, strip_path=False),
-                 'count': row['count']} for row in c.fetchall()]
+    # Top crashing maps：按地图身份合并，MD5 文件名与友好名称归入同一行
+    c.execute("SELECT map_name, map_hash, MAX(map_author) AS map_author, "
+              "COUNT(*) AS count FROM crash_reports "
+              "GROUP BY map_name, map_hash")
+    grouped_maps = {}
+    for row in c.fetchall():
+        map_hash = (row['map_hash']
+                    or _map_hash_from_name(row['map_name']) or "").lower() or None
+        key = _map_key(map_hash, row['map_name'])
+        if not key:
+            continue
+        entry = grouped_maps.setdefault(key, {
+            "map_key": key, "map_name": None, "map_hash": None,
+            "map_author": None, "count": 0})
+        entry["map_name"] = _preferred_map_name(entry["map_name"], row['map_name'])
+        entry["map_hash"] = entry["map_hash"] or map_hash
+        entry["map_author"] = entry["map_author"] or _clean_map_field(
+            row['map_author'], 80, strip_path=False)
+        entry["count"] += row['count']
+    top_maps = sorted(grouped_maps.values(),
+                      key=lambda item: item["count"], reverse=True)[:5]
+    for item in top_maps:
+        item["map_name"] = _map_display_name(item["map_name"], item["map_hash"])
 
     # Common crash reasons (based on analysis_result)
     c.execute(f"SELECT analysis_result as reason, COUNT(*) as count FROM crash_reports {where_clause} GROUP BY analysis_result ORDER BY count DESC LIMIT 5", params)
@@ -177,15 +194,16 @@ def get_stats():
                          "OR module LIKE ? OR annotation LIKE ?)")
         agg_params.extend([f"%{search_query}%"] * 4)
     agg_clause = " WHERE " + " AND ".join(agg_where) if agg_where else ""
-    c.execute(f"SELECT signature, map_hash, map_name, map_author, fingerprint, "
-              f"game_version, module, relative_offset, attribution, occurrence, "
-              f"annotation, last_seen FROM crash_aggregates{agg_clause} "
+    c.execute(f"SELECT signature, map_key, map_hash, map_name, map_author, "
+              f"fingerprint, game_version, module, relative_offset, attribution, "
+              f"occurrence, annotation, last_seen FROM crash_aggregates{agg_clause} "
               f"ORDER BY occurrence DESC, last_seen DESC LIMIT 10", agg_params)
     top_fingerprints = []
     for row in c.fetchall():
         item = dict(row)
         item['module'] = _module(item.get('module'))
-        item['map_name'] = _public_map_name(item.get('map_name'))
+        item['map_name'] = _map_display_name(
+            item.get('map_name'), item.get('map_hash'))
         item['map_author'] = _clean_map_field(
             item.get('map_author'), 80, strip_path=False)
         top_fingerprints.append(item)
@@ -230,8 +248,12 @@ def get_crashes():
     crashes = []
     for row in c.fetchall():
         item = dict(row)
+        map_hash = (item.get('map_hash')
+                    or _map_hash_from_name(item.get('map_name')) or "").lower() or None
+        item['map_hash'] = map_hash
         item['module'] = _module(item.get('module'))
-        item['map_name'] = _public_map_name(item.get('map_name'))
+        item['map_key'] = _map_key(map_hash, item.get('map_name'))
+        item['map_name'] = _map_display_name(item.get('map_name'), map_hash)
         item['map_author'] = _clean_map_field(
             item.get('map_author'), 80, strip_path=False)
         item['analysis_result'] = _public_text(item.get('analysis_result'))
