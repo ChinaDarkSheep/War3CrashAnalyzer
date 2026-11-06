@@ -1,4 +1,6 @@
+import io
 import os
+import sys
 import sqlite3
 import json
 import time
@@ -11,11 +13,28 @@ import threading
 import zipfile
 import secrets
 from collections import defaultdict, deque
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from datetime import datetime, timedelta
 
 app = Flask(__name__, static_folder='static')
 DB_PATH = os.environ.get('WAR3_DB_PATH') or os.path.join(os.path.dirname(__file__), 'crash_data.db')
+
+# 复用客户端的纯 Python 解析模块；服务端单独部署缺少 core/ 时退回轻量解析
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+try:
+    from core.knowledge import lookup as kb_lookup, lookup_any_module as kb_lookup_any
+    from core.stack_parser import (
+        find_crash_frame, first_valid_frame, parse_stack_trace, describe_stack)
+    from core.logtext import detect_host, diagnose_plain
+    from core.environment import analyze_environment
+    from core.diagnosis import build_conclusion
+    from core.fingerprint import build_fingerprint
+    CORE_READY = True
+except Exception as _core_error:
+    CORE_READY = False
+    print(f"[!] core 解析模块不可用，上传日志将使用轻量解析: {_core_error}")
 
 # --- P2.5 原始日志上传：50 MB / 6 位上传码 / 原始文件 7~15 天 ---
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -64,6 +83,11 @@ RAW_RETENTION_DAYS = min(15, max(7, _env_int('WAR3_RAW_RETENTION_DAYS', 14)))
 UPLOAD_RATE_PER_HOUR = max(1, _env_int('WAR3_UPLOAD_RATE', 10))
 UPLOAD_SALT = (os.environ.get('WAR3_UPLOAD_SALT') or secrets.token_hex(16)).encode('utf-8')
 UPLOAD_ROOT = os.path.abspath(UPLOAD_ROOT)
+
+# --- P2.7 管理端：默认关闭，未配置令牌时所有管理接口返回 503 ---
+ADMIN_TOKEN = (os.environ.get('WAR3_ADMIN_TOKEN') or '').strip()
+ADMIN_PAGE_SIZE_MAX = 200
+ADMIN_PREVIEW_BYTES = 512 * 1024
 
 # --- 共享知识库：读取仓库根目录 knowledge.json，与客户端同源 ---
 def _locate_knowledge():
@@ -149,6 +173,7 @@ def init_db():
         'map_hash': 'TEXT',
         'stack': 'TEXT',
         'dmp_info': 'TEXT',
+        'upload_code': 'TEXT',
     }
     for name, decl in new_columns.items():
         if name not in columns:
@@ -175,6 +200,8 @@ def init_db():
               "ON crash_reports(map_hash, fingerprint)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_reports_fingerprint "
               "ON crash_reports(fingerprint)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reports_upload_code "
+              "ON crash_reports(upload_code)")
 
     # P2.4 作者标注：根因 + 来源 / 置信度 / 标注人
     c.execute("PRAGMA table_info(crash_aggregates)")
@@ -214,6 +241,31 @@ def init_db():
               "ON raw_uploads(content_hash)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_raw_uploads_expires "
               "ON raw_uploads(expires_at)")
+
+    # P2.7 上传入库：记录服务端诊断结论，便于管理端列表直接展示
+    c.execute("PRAGMA table_info(raw_uploads)")
+    upload_columns = [row[1] for row in c.fetchall()]
+    upload_migrations = {
+        'fingerprint': 'TEXT',
+        'attribution': 'TEXT',
+        'confidence': 'REAL',
+        'report_count': 'INTEGER',
+    }
+    for name, decl in upload_migrations.items():
+        if name not in upload_columns:
+            print(f"[*] 正在为 upload 表添加 {name} 列...")
+            c.execute(f"ALTER TABLE raw_uploads ADD COLUMN {name} {decl}")
+
+    # P2.7 管理端操作审计：下载 / 预览 / 删除留痕
+    c.execute('''CREATE TABLE IF NOT EXISTS admin_audit
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  created_at DATETIME NOT NULL,
+                  action TEXT NOT NULL,
+                  code TEXT,
+                  detail TEXT,
+                  ip_hash TEXT)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_time "
+              "ON admin_audit(created_at)")
 
     conn.commit()
     conn.close()
@@ -772,6 +824,8 @@ def _parse_crash_zone(root):
         if not primaries and not dmps:
             continue
         version = map_name = offset = analysis = None
+        text = None
+        primary_path = primaries[0][0] if primaries else (dmps[0] if dmps else None)
         if primaries:
             with open(primaries[0][1], 'rb') as handle:
                 text = _decode_bytes(handle.read(4 * 1024 * 1024))
@@ -782,6 +836,8 @@ def _parse_crash_zone(root):
             offset = normalize_offset(offset)
             analysis = analyze_crash(text)
         records.append({
+            'path': primary_path,
+            'text': text,
             'files': len(files),
             'dmps': len(dmps),
             'game_version': version,
@@ -938,6 +994,7 @@ def cleanup_expired_uploads(force=False):
 
 def _public_upload(row):
     summary = _parse_json(row['summary']) or {}
+    keys = row.keys()
     return {
         'code': row['code'],
         'created_at': row['created_at'],
@@ -955,6 +1012,10 @@ def _public_upload(row):
         'relative_offset': row['relative_offset'],
         'analysis': row['analysis'],
         'kk_session': row['kk_session'],
+        'fingerprint': row['fingerprint'] if 'fingerprint' in keys else None,
+        'attribution': row['attribution'] if 'attribution' in keys else None,
+        'confidence': row['confidence'] if 'confidence' in keys else None,
+        'report_count': row['report_count'] if 'report_count' in keys else None,
         'summary': summary,
     }
 
@@ -962,6 +1023,298 @@ def _public_upload(row):
 def _module_from_analysis(analysis):
     match = re.match(r'\[([^\s\]]+)', analysis or '')
     return _module(match.group(1)) if match else None
+
+
+# --- P2.7 上传入库：服务端诊断，写入 crash_reports / crash_aggregates ---
+
+_ADDR_PATTERNS = (
+    r'occurred at (0x[0-9A-F]+)',
+    r'at [0-9A-F]{4}:([0-9A-F]{8})',
+    r"The instruction at '(0x[0-9A-F]+)'",
+    r"The instruction at ([0-9A-F]{8})",
+    r'Address:\s+(0x[0-9A-F]{8})',
+)
+
+
+def _extract_crash_addr(text):
+    for pattern in _ADDR_PATTERNS:
+        match = re.search(pattern, text or '', re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    start = (text or '').find("Address  Frame    Logical addr  Module")
+    if start != -1:
+        for line in text[start:].splitlines()[1:]:
+            match = re.search(
+                r'([0-9A-F]{8})\s+[0-9A-F]{8}\s+[0-9A-F]{4}:[0-9A-F]{8}\s+(.*)',
+                line, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+    return "Unknown"
+
+
+def _frame_rva(frame):
+    """只有 .text（0001 节）的节内偏移 +0x1000 才能换算成 RVA。"""
+    if frame.get('rva') is None:
+        return None
+    return normalize_offset("0x%08X" % frame['rva'])
+
+
+def _stack_payload(frames, limit=48):
+    stack = []
+    for frame in (frames or [])[:limit]:
+        module = (frame.get('module') or '').replace('/', '\\').rsplit('\\', 1)[-1]
+        rva = frame.get('rva')
+        if module or rva is not None:
+            stack.append({'module': module or None, 'rva': rva})
+    return stack
+
+
+def _diagnose_with_core(text):
+    addr = _extract_crash_addr(text)
+    frames = parse_stack_trace(text)
+    relative_offset = None
+    module_name = None
+    used_fallback = False
+
+    crash_frame = find_crash_frame(frames, addr)
+    if crash_frame and (crash_frame.get('module') or '').lower() not in (
+            '<unknown>', 'unknown', ''):
+        relative_offset = _frame_rva(crash_frame)
+        module_name = os.path.basename(crash_frame['module'])
+    else:
+        fallback = first_valid_frame(frames)
+        if fallback:
+            relative_offset = _frame_rva(fallback)
+            module_name = os.path.basename(fallback['module'])
+            used_fallback = addr != "Unknown"
+
+    if relative_offset is None and addr != "Unknown" and not used_fallback:
+        clean_addr = addr.replace("0X", "")[-8:]
+        try:
+            if 0 < int(clean_addr, 16) < 0x05000000:
+                relative_offset = normalize_offset(clean_addr)
+                exe_match = re.search(r'Exe:\s+(.*)', text, re.IGNORECASE)
+                if exe_match:
+                    module_name = os.path.basename(exe_match.group(1).strip())
+        except ValueError:
+            pass
+
+    map_name = extract_map_name(text)
+    plain = diagnose_plain(text)
+    exe_match = re.search(r"^(?:Exe|Program):\s*(.+)$", text, re.M | re.I)
+    log_exe = exe_match.group(1).strip() if exe_match else None
+    environment = analyze_environment(
+        text, frames=frames, focus_module=module_name, exe=log_exe,
+        allow_hint=not (plain and plain.get("attribution") == "地图"))
+
+    build = re.search(r'War3Build:\s*([0-9.]+)', text, re.IGNORECASE)
+    build_raw = build.group(1) if build else None
+    version = normalize_version(build_raw) if build_raw else None
+    rva = normalize_offset(relative_offset)
+
+    if plain and plain.get('host') == 'editor':
+        conclusion = build_conclusion(
+            plain=plain, environment=environment, matches=None,
+            module_name=plain.get('exe') or module_name or 'Unknown', rva=None,
+            addr=addr, log_version=None, used_fallback=False, host='editor')
+        return {
+            'addr': addr,
+            'relative_offset': None,
+            'module': plain.get('exe') or module_name,
+            'map_name': map_name,
+            'version': None,
+            'stack': _stack_payload(frames),
+            'fingerprint': None,
+            'fingerprint_version': None,
+            'fingerprint_frames': [],
+            'attribution': conclusion['attribution'],
+            'confidence': conclusion['confidence'],
+            'analysis': conclusion['text'],
+        }
+
+    if rva:
+        if module_name:
+            matches = [(module_name, ver, entry)
+                       for ver, entry in kb_lookup(module_name, version, rva)]
+        else:
+            matches = kb_lookup_any(version, rva)
+    else:
+        matches = []
+
+    fingerprint = build_fingerprint(
+        frames, version=version or build_raw,
+        module_name=module_name, rva=rva)
+    conclusion = build_conclusion(
+        plain=plain, environment=environment, matches=matches,
+        module_name=module_name or 'Unknown', rva=rva, addr=addr,
+        log_version=version, used_fallback=used_fallback,
+        host=detect_host(text)[0])
+
+    return {
+        'addr': addr,
+        'relative_offset': relative_offset,
+        'module': module_name,
+        'map_name': map_name,
+        'version': version,
+        'stack': _stack_payload(frames),
+        'fingerprint': (fingerprint or {}).get('signature'),
+        'fingerprint_version': (fingerprint or {}).get('version'),
+        'fingerprint_frames': (fingerprint or {}).get('frames') or [],
+        'attribution': conclusion['attribution'],
+        'confidence': conclusion['confidence'],
+        'analysis': conclusion['text'],
+    }
+
+
+def _diagnose_light(text):
+    """服务端未部署 core/ 时的兜底：只做偏移、地图与知识库查表。"""
+    addr, relative_offset = extract_crash_info(text)
+    relative_offset = normalize_offset(relative_offset)
+    map_name = extract_map_name(text)
+    analysis = analyze_crash(text)
+    module_name = _module_from_analysis(analysis)
+    build = re.search(r'War3Build:\s*([0-9.]+)', text, re.IGNORECASE)
+    version = normalize_version(build.group(1)) if build else None
+    signature = None
+    if relative_offset and module_name:
+        material = f"{version or 'unknown'}|{module_name.lower()}+{relative_offset}"
+        signature = hashlib.sha1(material.encode('utf-8')).hexdigest()[:12].upper()
+    return {
+        'addr': addr,
+        'relative_offset': relative_offset,
+        'module': module_name,
+        'map_name': map_name,
+        'version': version,
+        'stack': [],
+        'fingerprint': signature,
+        'fingerprint_version': version,
+        'fingerprint_frames': [f"{module_name.lower()}+{relative_offset}"]
+        if signature else [],
+        'attribution': None,
+        'confidence': None,
+        'analysis': analysis,
+    }
+
+
+def _diagnose_text(text):
+    try:
+        return _diagnose_with_core(text) if CORE_READY else _diagnose_light(text)
+    except Exception as exc:
+        print(f"[!] 上传日志诊断失败: {exc}")
+        return _diagnose_light(text)
+
+
+def _upload_map_hash(map_name, kk_info, allow_unknown):
+    """只有地图名与 KK 会话一致（或崩溃记录本身没有地图名）时才附哈希。"""
+    if not kk_info:
+        return None
+    kk_hash = kk_info.get('map_hash')
+    if not kk_hash:
+        return None
+    kk_name = (kk_info.get('map_name') or '').strip()
+    name = (map_name or '').strip()
+    if not name or name == 'Unknown':
+        return kk_hash if allow_unknown else None
+    if kk_name and name.lower() == kk_name.lower():
+        return kk_hash
+    return None
+
+
+def _ingest_crash_records(conn, records, code, kk_info, timestamp,
+                          representative_index=0):
+    """把每份崩溃记录写入 crash_reports 并累加聚合；返回入库统计。"""
+    text_count = sum(1 for record in records if record.get('text'))
+    diagnoses = []
+    inserted = 0
+    duplicates = 0
+    rebuilt = False
+
+    for record in records:
+        text = record.get('text')
+        if not text:
+            diagnoses.append(None)
+            continue
+        diagnosis = _diagnose_text(text)
+        diagnoses.append(diagnosis)
+
+        map_name = record.get('map_name')
+        if not map_name or map_name == 'Unknown':
+            map_name = diagnosis.get('map_name')
+        if not map_name or map_name == 'Unknown':
+            map_name = (kk_info or {}).get('map_name') or 'Unknown'
+        map_hash = _upload_map_hash(map_name, kk_info, text_count == 1)
+
+        content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+        stack = diagnosis.get('stack') or []
+        frames = diagnosis.get('fingerprint_frames') or []
+        fields = (
+            map_name,
+            '网页上传',
+            diagnosis.get('addr'),
+            text,
+            content_hash,
+            timestamp,
+            diagnosis.get('analysis'),
+            diagnosis.get('module'),
+            diagnosis.get('relative_offset'),
+            diagnosis.get('version'),
+            diagnosis.get('attribution'),
+            diagnosis.get('confidence'),
+            diagnosis.get('fingerprint'),
+            diagnosis.get('fingerprint_version'),
+            _frame_list(frames),
+            map_hash,
+            _json_text(stack) if stack else None,
+            None,
+            code,
+        )
+        try:
+            cursor = conn.execute('''INSERT INTO crash_reports
+                                     (map_name, os_info, crash_address, log_content,
+                                      content_hash, timestamp, analysis_result, module,
+                                      relative_offset, game_version, attribution,
+                                      confidence, fingerprint, fingerprint_version,
+                                      fingerprint_frames, map_hash, stack, dmp_info,
+                                      upload_code)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                  fields)
+            inserted += 1
+            _upsert_aggregate(
+                conn, cursor.lastrowid, map_hash, map_name,
+                diagnosis.get('fingerprint'), diagnosis.get('version'),
+                diagnosis.get('module'), diagnosis.get('relative_offset'),
+                diagnosis.get('attribution'), timestamp)
+        except sqlite3.IntegrityError:
+            duplicates += 1
+            conn.execute('''UPDATE crash_reports SET
+                             module = COALESCE(module, ?),
+                             relative_offset = COALESCE(relative_offset, ?),
+                             game_version = COALESCE(game_version, ?),
+                             attribution = COALESCE(attribution, ?),
+                             confidence = COALESCE(confidence, ?),
+                             fingerprint = COALESCE(fingerprint, ?),
+                             fingerprint_version = COALESCE(fingerprint_version, ?),
+                             fingerprint_frames = COALESCE(fingerprint_frames, ?),
+                             map_hash = COALESCE(map_hash, ?),
+                             stack = COALESCE(stack, ?),
+                             upload_code = COALESCE(upload_code, ?)
+                             WHERE content_hash = ?''',
+                          fields[7:17] + (code, content_hash))
+            rebuilt = True
+
+    if rebuilt:
+        rebuild_aggregates(conn)
+
+    representative = None
+    if 0 <= representative_index < len(diagnoses):
+        representative = diagnoses[representative_index]
+    return {
+        'inserted': inserted,
+        'duplicates': duplicates,
+        'representative': representative,
+        'with_offset': sum(1 for item in diagnoses
+                           if item and item.get('relative_offset')),
+    }
 
 
 @app.errorhandler(413)
@@ -1031,18 +1384,17 @@ def upload_logs():
                 payload.update({"status": "duplicate", "duplicate": True})
                 return jsonify(payload)
 
-            representative = max(
-                crash_records,
-                key=lambda record: (
-                    record['relative_offset'] is not None,
-                    record['dmps'] > 0,
-                    record['files'],
-                )) if crash_records else {}
+            representative_index = _representative_index(crash_records)
+            representative = (crash_records[representative_index]
+                              if representative_index >= 0 else {})
             version = representative.get('game_version') or (kk_info or {}).get('game_version')
             map_name = representative.get('map_name')
             if not map_name or map_name == 'Unknown':
                 map_name = (kk_info or {}).get('map_name')
-            map_hash = (kk_info or {}).get('map_hash')
+            map_hash = _upload_map_hash(
+                map_name, kk_info,
+                allow_unknown=sum(1 for record in crash_records
+                                  if record.get('text')) == 1)
             relative_offset = representative.get('relative_offset')
             analysis = representative.get('analysis')
             crash_module = _module_from_analysis(analysis)
@@ -1091,10 +1443,56 @@ def upload_logs():
                               crash_module, relative_offset, analysis,
                               (kk_info or {}).get('session'),
                               json.dumps(summary, ensure_ascii=False)))
-                conn.commit()
             except Exception:
                 shutil.rmtree(final_root, ignore_errors=True)
                 raise
+
+            # 入库失败不影响用户拿到上传码：原始文件已保留，可由维护者补跑
+            try:
+                conn.execute('SAVEPOINT ingest')
+                outcome = _ingest_crash_records(
+                    conn, crash_records, code, kk_info, created_text,
+                    representative_index)
+                if summary.get('crash') is not None:
+                    summary['crash']['with_offset'] = outcome['with_offset']
+                    conn.execute(
+                        "UPDATE raw_uploads SET summary = ? WHERE code = ?",
+                        (json.dumps(summary, ensure_ascii=False), code))
+                diagnosis = outcome.get('representative')
+                if diagnosis:
+                    diagnosed_map = diagnosis.get('map_name')
+                    if not diagnosed_map or diagnosed_map == 'Unknown':
+                        diagnosed_map = None
+                    conn.execute('''UPDATE raw_uploads SET
+                                    game_version = COALESCE(?, game_version),
+                                    map_name = COALESCE(?, map_name),
+                                    map_hash = COALESCE(?, map_hash),
+                                    crash_module = COALESCE(?, crash_module),
+                                    relative_offset = COALESCE(?, relative_offset),
+                                    analysis = COALESCE(?, analysis),
+                                    fingerprint = ?, attribution = ?,
+                                    confidence = ?, report_count = ?
+                                    WHERE code = ?''',
+                                 (diagnosis.get('version'),
+                                  diagnosed_map,
+                                  map_hash,
+                                  diagnosis.get('module'),
+                                  diagnosis.get('relative_offset'),
+                                  diagnosis.get('analysis'),
+                                  diagnosis.get('fingerprint'),
+                                  diagnosis.get('attribution'),
+                                  diagnosis.get('confidence'),
+                                  outcome['inserted'] + outcome['duplicates'],
+                                  code))
+                conn.execute('RELEASE ingest')
+            except Exception as exc:
+                print(f"[!] 上传日志入库失败（原始文件已保留）: {exc}")
+                try:
+                    conn.execute('ROLLBACK TO ingest')
+                    conn.execute('RELEASE ingest')
+                except sqlite3.Error:
+                    pass
+            conn.commit()
             row = conn.execute("SELECT * FROM raw_uploads WHERE code = ?", (code,)).fetchone()
         finally:
             conn.close()
@@ -1129,6 +1527,395 @@ def upload_status(code):
     if row is None:
         return jsonify({"error": "not found", "message": "上传码不存在或已过期"}), 404
     return jsonify(_public_upload(row))
+
+
+# --- P2.7 管理端：令牌保护的列表 / 详情 / 下载 / 删除 ---
+
+def _admin_denied():
+    if not ADMIN_TOKEN:
+        return jsonify({
+            "error": "admin_disabled",
+            "message": "服务端未设置 WAR3_ADMIN_TOKEN，管理端已禁用",
+        }), 503
+    provided = (request.headers.get("X-Admin-Token") or "").strip()
+    if not hmac.compare_digest(provided, ADMIN_TOKEN):
+        return jsonify({"error": "forbidden", "message": "管理令牌无效"}), 403
+    return None
+
+
+def _audit(action, code, detail=''):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.execute(
+                "INSERT INTO admin_audit (created_at, action, code, detail, ip_hash) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), action, code,
+                 (detail or '')[:500], _client_ip_hash()))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"[!] 管理操作审计写入失败: {exc}")
+
+
+def _admin_upload(row):
+    data = _public_upload(row)
+    data.update({
+        'ip_hash': row['ip_hash'],
+        'raw_deleted_at': row['raw_deleted_at'],
+    })
+    return data
+
+
+def _admin_upload_row(code):
+    if not re.fullmatch(r'\d{6}', code or ''):
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            "SELECT * FROM raw_uploads WHERE code = ?", (code,)).fetchone()
+    finally:
+        conn.close()
+
+
+def _upload_storage_root(code):
+    return os.path.join(UPLOAD_ROOT, code)
+
+
+def _upload_file_path(code, rel):
+    """把管理端传入的相对路径限制在上传目录内，拒绝穿越与绝对路径。"""
+    if not re.fullmatch(r'\d{6}', code or '') or not rel:
+        return None
+    root = os.path.abspath(_upload_storage_root(code))
+    target = os.path.abspath(os.path.join(
+        root, *rel.replace('\\', '/').split('/')))
+    if not target.startswith(root + os.sep):
+        return None
+    return target if os.path.isfile(target) else None
+
+
+def _representative_index(crash_records):
+    if not crash_records:
+        return -1
+    return max(
+        range(len(crash_records)),
+        key=lambda index: (
+            crash_records[index]['relative_offset'] is not None,
+            crash_records[index]['dmps'] > 0,
+            crash_records[index]['files'],
+        ))
+
+
+@app.route('/admin/uploads')
+def admin_uploads_page():
+    return send_from_directory(app.static_folder, 'admin_uploads.html')
+
+
+@app.route('/api/admin/uploads', methods=['GET'])
+def admin_upload_list():
+    denied = _admin_denied()
+    if denied:
+        return denied
+
+    try:
+        limit = int(request.args.get('limit', 50))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = min(ADMIN_PAGE_SIZE_MAX, max(1, limit))
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
+    where = []
+    params = []
+    keyword = (request.args.get('q') or '').strip()
+    if keyword:
+        like = f"%{keyword}%"
+        where.append("(code LIKE ? OR map_name LIKE ? OR map_hash LIKE ? "
+                     "OR crash_module LIKE ? OR relative_offset LIKE ? "
+                     "OR analysis LIKE ? OR fingerprint LIKE ?)")
+        params.extend([like] * 7)
+    version = (request.args.get('version') or '').strip()
+    if version:
+        where.append("game_version = ?")
+        params.append(version)
+    attribution = (request.args.get('attribution') or '').strip()
+    if attribution:
+        where.append("attribution = ?")
+        params.append(attribution)
+    has_kk = request.args.get('has_kk')
+    if has_kk in ('0', '1'):
+        where.append("has_kk = ?")
+        params.append(int(has_kk))
+    raw = request.args.get('raw')
+    if raw == '1':
+        where.append("raw_deleted_at IS NULL")
+    elif raw == '0':
+        where.append("raw_deleted_at IS NOT NULL")
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM raw_uploads{where_sql}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM raw_uploads{where_sql} "
+            "ORDER BY created_at DESC, code DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]).fetchall()
+    finally:
+        conn.close()
+    return jsonify({
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'items': [_admin_upload(row) for row in rows],
+    })
+
+
+@app.route('/api/admin/uploads/<code>', methods=['GET'])
+def admin_upload_detail(code):
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+
+    files = []
+    if not row['raw_deleted_at']:
+        root = _upload_storage_root(row['code'])
+        if os.path.isdir(root):
+            for rel, full in _walk_files(root):
+                try:
+                    size = os.path.getsize(full)
+                except OSError:
+                    size = None
+                files.append({'path': rel, 'size': size})
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        reports = conn.execute(
+            "SELECT id, map_name, map_hash, game_version, module, relative_offset, "
+            "attribution, confidence, fingerprint, timestamp, analysis_result, stack "
+            "FROM crash_reports WHERE upload_code = ? ORDER BY id",
+            (row['code'],)).fetchall()
+        audits = conn.execute(
+            "SELECT created_at, action, detail FROM admin_audit "
+            "WHERE code = ? ORDER BY id DESC LIMIT 40",
+            (row['code'],)).fetchall()
+    finally:
+        conn.close()
+
+    return jsonify({
+        'upload': _admin_upload(row),
+        'files': files,
+        'reports': [dict(report) for report in reports],
+        'audits': [dict(item) for item in audits],
+    })
+
+
+@app.route('/api/admin/uploads/<code>/preview', methods=['GET'])
+def admin_upload_preview(code):
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+    if row['raw_deleted_at']:
+        return jsonify({"error": "expired", "message": "原始文件已到期删除"}), 410
+
+    rel = (request.args.get('path') or '').strip()
+    path = _upload_file_path(row['code'], rel)
+    if not path:
+        return jsonify({"error": "not_found", "message": "文件不存在"}), 404
+    if _ext_of(path) in ('.dmp', '.mdmp', '.bin'):
+        return jsonify({"error": "binary", "message": "二进制文件不支持在线预览，请直接下载"}), 415
+
+    size = os.path.getsize(path)
+    with open(path, 'rb') as handle:
+        data = handle.read(ADMIN_PREVIEW_BYTES + 1)
+    truncated = len(data) > ADMIN_PREVIEW_BYTES
+    _audit('preview', row['code'], rel)
+    return jsonify({
+        'path': rel,
+        'size': size,
+        'truncated': truncated,
+        'text': _decode_bytes(data[:ADMIN_PREVIEW_BYTES]),
+    })
+
+
+@app.route('/api/admin/uploads/<code>/file', methods=['GET'])
+def admin_upload_file(code):
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+    if row['raw_deleted_at']:
+        return jsonify({"error": "expired", "message": "原始文件已到期删除"}), 410
+
+    rel = (request.args.get('path') or '').strip()
+    path = _upload_file_path(row['code'], rel)
+    if not path:
+        return jsonify({"error": "not_found", "message": "文件不存在"}), 404
+
+    _audit('download_file', row['code'], rel)
+    return send_file(path, as_attachment=True,
+                     download_name=os.path.basename(path))
+
+
+@app.route('/api/admin/uploads/<code>/archive', methods=['GET'])
+def admin_upload_archive(code):
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+    if row['raw_deleted_at']:
+        return jsonify({"error": "expired", "message": "原始文件已到期删除"}), 410
+
+    root = _upload_storage_root(row['code'])
+    if not os.path.isdir(root):
+        return jsonify({"error": "expired", "message": "原始文件不存在"}), 410
+    entries = _walk_files(root)
+    if not entries:
+        return jsonify({"error": "empty", "message": "该上传没有原始文件"}), 410
+
+    # 单次上传上限 50 MB，直接在内存里打包，避免临时文件在 Windows 上被占用无法删除
+    buffer = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED,
+                             allowZip64=True) as archive:
+            for rel, full in entries:
+                archive.write(full, arcname=rel)
+    except Exception as exc:
+        print(f"[!] 打包上传文件失败: {exc}")
+        return jsonify({"error": "archive_failed", "message": "打包失败"}), 500
+    buffer.seek(0)
+
+    _audit('download_archive', row['code'], f'{len(entries)} files')
+    return send_file(
+        buffer, as_attachment=True, mimetype='application/zip',
+        download_name=f'war3-upload-{row["code"]}.zip')
+
+
+@app.route('/api/admin/uploads/<code>/delete', methods=['POST'])
+def admin_upload_delete(code):
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+
+    already_deleted = bool(row['raw_deleted_at'])
+    deleted_at = row['raw_deleted_at']
+    if not already_deleted:
+        deleted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        shutil.rmtree(_upload_storage_root(row['code']), ignore_errors=True)
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.execute(
+                "UPDATE raw_uploads SET raw_deleted_at = ? WHERE code = ?",
+                (deleted_at, row['code']))
+            conn.commit()
+        finally:
+            conn.close()
+        _audit('delete_raw', row['code'], 'raw files removed')
+
+    return jsonify({
+        'status': 'deleted',
+        'code': row['code'],
+        'already_deleted': already_deleted,
+        'raw_deleted_at': deleted_at,
+    })
+
+
+@app.route('/api/admin/uploads/<code>/reingest', methods=['POST'])
+def admin_upload_reingest(code):
+    """补跑入库：用于 P2.7 之前的上传或入库失败的历史记录。"""
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+    if row['raw_deleted_at']:
+        return jsonify({"error": "expired", "message": "原始文件已到期删除"}), 410
+
+    root = _upload_storage_root(row['code'])
+    crash_dir = os.path.join(root, 'crash')
+    kk_dir = os.path.join(root, 'kk')
+    try:
+        crash_records = _parse_crash_zone(crash_dir) if os.path.isdir(crash_dir) else []
+        kk_info = _parse_kk_zone(kk_dir) if os.path.isdir(kk_dir) else None
+    except UploadError as exc:
+        return jsonify({"error": "invalid", "message": exc.message}), 400
+    if not crash_records:
+        return jsonify({
+            "error": "no_crash",
+            "message": "该上传没有可入库的崩溃日志（仅平台日志）",
+        }), 400
+
+    representative_index = _representative_index(crash_records)
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        outcome = _ingest_crash_records(
+            conn, crash_records, row['code'], kk_info, timestamp,
+            representative_index)
+        diagnosis = outcome.get('representative')
+        if diagnosis:
+            conn.execute('''UPDATE raw_uploads SET
+                            fingerprint = COALESCE(?, fingerprint),
+                            attribution = COALESCE(?, attribution),
+                            confidence = COALESCE(?, confidence),
+                            report_count = ?,
+                            game_version = COALESCE(game_version, ?),
+                            map_name = COALESCE(map_name, ?),
+                            map_hash = COALESCE(map_hash, ?),
+                            crash_module = COALESCE(crash_module, ?),
+                            relative_offset = COALESCE(relative_offset, ?),
+                            analysis = COALESCE(analysis, ?)
+                            WHERE code = ?''',
+                         (diagnosis.get('fingerprint'),
+                          diagnosis.get('attribution'),
+                          diagnosis.get('confidence'),
+                          outcome['inserted'] + outcome['duplicates'],
+                          diagnosis.get('version'),
+                          diagnosis.get('map_name'),
+                          _upload_map_hash(
+                              diagnosis.get('map_name') or row['map_name'],
+                              kk_info, True),
+                          diagnosis.get('module'),
+                          diagnosis.get('relative_offset'),
+                          diagnosis.get('analysis'),
+                          row['code']))
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"[!] 补跑入库失败: {exc}")
+        return jsonify({"error": "server_error", "message": "入库失败"}), 500
+    finally:
+        conn.close()
+
+    _audit('reingest', row['code'],
+           f"inserted={outcome['inserted']} duplicates={outcome['duplicates']}")
+    return jsonify({
+        'status': 'ok',
+        'inserted': outcome['inserted'],
+        'duplicates': outcome['duplicates'],
+    })
 
 
 @app.route('/')

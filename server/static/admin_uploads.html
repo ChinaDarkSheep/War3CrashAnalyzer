@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 上传日志管理 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1500px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid #eee; vertical-align: top; font-size: 0.92em; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .table-wrap { overflow-x: auto; }
+        .table-wrap table { min-width: 1080px; }
+        .badge { padding: 3px 9px; border-radius: 6px; font-size: 0.78em; font-weight: bold; white-space: nowrap; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: var(--primary); border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .badge-warning { background-color: #fef9c3; color: #a16207; border: 1px solid #fde68a; }
+        .badge-muted { background-color: #f1f2f6; color: #636e72; border: 1px solid #dfe6e9; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .query-row input[type="text"], .query-row input[type="password"], .query-row select {
+            padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px;
+            outline: none; font-size: 0.92em; background: white;
+        }
+        .query-row input[type="text"] { min-width: 240px; }
+        .query-row input[type="password"] { min-width: 300px; }
+        .query-row input:focus, .query-row select:focus { border-color: var(--primary); }
+        button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.92em;
+        }
+        button:disabled { background: #b2bec3; cursor: not-allowed; }
+        button.ghost { background: white; color: #636e72; border: 1px solid #dfe6e9; }
+        button.danger { background: var(--danger); }
+        button.small { padding: 5px 10px; font-size: 0.82em; }
+        .muted { color: #888; font-size: 0.86em; }
+        .mono { font-family: Consolas, 'Courier New', monospace; }
+        .code-badge { font-family: Consolas, monospace; font-size: 1.05em; font-weight: bold; color: var(--dark); }
+        .alert { display: none; margin-top: 10px; padding: 10px 14px; border-radius: 6px; font-size: 0.9em; background: #e0f2fe; color: #0369a1; }
+        .alert.show { display: block; }
+        .alert.error { background: #fee2e2; color: #b91c1c; }
+        .pager { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+        .empty { text-align: center; color: #999; padding: 24px; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 18px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 13px; }
+        .meta-item .label { color: #888; font-size: 0.76em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; font-size: 0.9em; }
+        .stack { font-family: Consolas, monospace; font-size: 0.8em; color: #555; background: #f8f9fa; padding: 8px; border-radius: 6px; margin-top: 6px; white-space: pre-wrap; word-break: break-all; }
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 30px 16px; overflow-y: auto; z-index: 50; }
+        .modal[hidden] { display: none; }
+        .modal-body { background: white; border-radius: 12px; width: 100%; max-width: 1180px; padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
+        #confirm-modal { align-items: center; z-index: 60; }
+        .confirm-box { background: white; border-radius: 12px; width: 100%; max-width: 440px; padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
+        .confirm-box h3 { margin-top: 0; }
+        .confirm-box p { color: #555; line-height: 1.6; white-space: pre-line; }
+        .confirm-box .toolbar { justify-content: flex-end; }
+        #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+        .toast-item { background: #2c3e50; color: white; padding: 10px 18px; border-radius: 8px; font-size: 0.9em; box-shadow: 0 6px 18px rgba(0,0,0,0.2); opacity: 0; transition: opacity 0.25s; max-width: 90vw; }
+        .toast-item.error { background: #b91c1c; }
+        .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+        .modal-head h2 { margin: 0; }
+        .modal-head button { background: transparent; color: #636e72; font-size: 1.3em; padding: 2px 8px; }
+        h3 { font-size: 1rem; margin: 22px 0 10px; color: var(--dark); }
+        .file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed #eee; }
+        .file-row .file-path { flex: 1 1 260px; font-family: Consolas, monospace; font-size: 0.84em; word-break: break-all; }
+        .file-row button { flex: 0 0 auto; }
+        .preview-box { margin-top: 12px; }
+        .preview-box pre { background: #1e252b; color: #e6edf3; padding: 14px; border-radius: 8px; max-height: 380px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.8em; }
+        .report-item { border: 1px solid #eef1f3; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+        .report-item .analysis { white-space: pre-wrap; font-size: 0.88em; color: #444; margin-top: 6px; }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔐 上传日志管理</h1>
+            <p>仅维护者可见：查看、下载与删除用户通过网页上传的原始日志</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+            <a class="nav-link" href="/upload">📤 上传日志</a>
+        </header>
+
+        <div class="card" id="auth-card">
+            <h2>管理令牌</h2>
+            <div class="query-row">
+                <input type="password" id="token-input" placeholder="WAR3_ADMIN_TOKEN" autocomplete="off">
+                <button id="token-btn">进入管理</button>
+                <button id="token-clear" class="ghost">清除令牌</button>
+            </div>
+            <p class="muted">令牌只保存在当前浏览器的 sessionStorage，关闭标签页即失效。服务端需设置 WAR3_ADMIN_TOKEN，否则管理端返回 503。</p>
+            <div class="alert" id="auth-alert"></div>
+        </div>
+
+        <div id="main" hidden>
+            <div class="card">
+                <h2>筛选</h2>
+                <div class="query-row">
+                    <input type="text" id="q-input" placeholder="上传码 / 地图 / 模块 / 偏移 / 指纹">
+                    <input type="text" id="version-input" placeholder="版本，如 1.27a" style="min-width: 140px;">
+                    <select id="attribution-select">
+                        <option value="">全部归属</option>
+                        <option value="地图">地图</option>
+                        <option value="本机环境或对战平台">本机环境或对战平台</option>
+                        <option value="编辑器">编辑器</option>
+                        <option value="暂无法确定">暂无法确定</option>
+                    </select>
+                    <select id="kk-select">
+                        <option value="">平台日志：全部</option>
+                        <option value="1">含平台日志</option>
+                        <option value="0">无平台日志</option>
+                    </select>
+                    <select id="raw-select">
+                        <option value="">原始文件：全部</option>
+                        <option value="1">原始文件可用</option>
+                        <option value="0">已到期删除</option>
+                    </select>
+                    <button id="search-btn">查询</button>
+                    <button id="refresh-btn" class="ghost">刷新</button>
+                    <button id="logout-btn" class="ghost">更换令牌</button>
+                </div>
+                <p id="list-summary" class="muted"></p>
+                <div class="alert" id="list-alert"></div>
+            </div>
+
+            <div class="card">
+                <h2>上传记录</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 90px;">上传码</th>
+                                <th style="width: 150px;">上传时间</th>
+                                <th style="width: 170px;">内容</th>
+                                <th style="width: 190px;">版本 / 地图</th>
+                                <th style="width: 190px;">崩溃位置</th>
+                                <th style="width: 150px;">归属</th>
+                                <th style="width: 120px;">原始文件</th>
+                                <th style="width: 210px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="upload-rows"></tbody>
+                    </table>
+                </div>
+                <div class="pager">
+                    <button id="prev-btn" class="ghost" disabled>上一页</button>
+                    <span id="page-label" class="muted"></span>
+                    <button id="next-btn" class="ghost" disabled>下一页</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="detail-modal" hidden>
+        <div class="modal-body">
+            <div class="modal-head">
+                <h2 id="detail-title">上传详情</h2>
+                <button id="detail-close" title="关闭">✕</button>
+            </div>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <div class="modal" id="confirm-modal" hidden>
+        <div class="confirm-box">
+            <h3>确认删除</h3>
+            <p id="confirm-message"></p>
+            <div class="toolbar">
+                <button class="ghost" id="confirm-cancel">取消</button>
+                <button class="danger" id="confirm-ok">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const TOKEN_KEY = 'war3_admin_token';
+        const state = {
+            token: sessionStorage.getItem(TOKEN_KEY) || '',
+            limit: 50,
+            offset: 0,
+            total: 0,
+            detailCode: null
+        };
+
+        const $ = (id) => document.getElementById(id);
+
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function fmtBytes(value) {
+            if (value == null) return '—';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let number = Number(value);
+            let index = 0;
+            while (number >= 1024 && index < units.length - 1) {
+                number /= 1024;
+                index += 1;
+            }
+            return (index === 0 ? number : number.toFixed(1)) + ' ' + units[index];
+        }
+
+        function attributionBadge(value) {
+            if (!value) return '<span class="badge badge-muted">未判定</span>';
+            const cls = value === '地图' ? 'badge-danger'
+                : value === '编辑器' ? 'badge-warning'
+                : value === '本机环境或对战平台' ? 'badge-info' : 'badge-muted';
+            return `<span class="badge ${cls}">${esc(value)}</span>`;
+        }
+
+        function confidenceText(value) {
+            return value == null ? '' : `<div class="muted">置信度 ${Math.round(Number(value) * 100)}%</div>`;
+        }
+
+        function rawStatus(upload) {
+            if (upload.raw_available) {
+                return `<span class="badge badge-success">可用</span>
+                        <div class="muted">保留至 ${esc(upload.expires_at)}</div>`;
+            }
+            return `<span class="badge badge-danger">已删除</span>
+                    <div class="muted">${esc(upload.raw_deleted_at || '')}</div>`;
+        }
+
+        function showAlert(id, message, isError) {
+            const box = $(id);
+            box.textContent = message || '';
+            box.className = 'alert' + (message ? ' show' : '') + (isError ? ' error' : '');
+        }
+
+        function toast(message, isError) {
+            const item = document.createElement('div');
+            item.className = 'toast-item' + (isError ? ' error' : '');
+            item.textContent = message;
+            $('toast').appendChild(item);
+            requestAnimationFrame(() => { item.style.opacity = '1'; });
+            setTimeout(() => {
+                item.style.opacity = '0';
+                setTimeout(() => item.remove(), 260);
+            }, 3200);
+        }
+
+        let confirmResolver = null;
+
+        function askConfirm(message) {
+            $('confirm-message').textContent = message;
+            $('confirm-modal').hidden = false;
+            return new Promise((resolve) => { confirmResolver = resolve; });
+        }
+
+        function closeConfirm(result) {
+            $('confirm-modal').hidden = true;
+            if (confirmResolver) {
+                const resolve = confirmResolver;
+                confirmResolver = null;
+                resolve(result);
+            }
+        }
+
+        function headers(extra) {
+            return Object.assign({ 'X-Admin-Token': state.token }, extra || {});
+        }
+
+        async function api(path, options) {
+            const response = await fetch(path, Object.assign({ headers: headers() }, options || {}));
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (err) {
+                data = null;
+            }
+            if (!response.ok) {
+                const error = new Error((data && data.message) || `请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        }
+
+        function renderRows(items) {
+            const tbody = $('upload-rows');
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty">没有匹配的上传记录</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map((upload) => {
+                const content = [
+                    `<div>${upload.file_count || 0} 个文件 · ${fmtBytes(upload.total_bytes)}</div>`,
+                    '<div class="muted">' + [
+                        upload.has_crash ? '崩溃日志' : null,
+                        upload.has_kk ? '平台日志' : null
+                    ].filter(Boolean).join(' + ') + '</div>'
+                ].join('');
+                const mapLine = upload.map_name
+                    ? `<div>${esc(upload.map_name)}</div>` : '<div class="muted">地图未知</div>';
+                const hashLine = upload.map_hash
+                    ? `<div class="muted mono">${esc(upload.map_hash)}</div>` : '';
+                const version = upload.game_version
+                    ? `<span class="badge badge-info">${esc(upload.game_version)}</span>` : '<span class="muted">版本未知</span>';
+                const position = upload.relative_offset
+                    ? `<div class="mono">${esc(upload.module || '?')}+${esc(upload.relative_offset)}</div>`
+                    : '<div class="muted">无模块内偏移</div>';
+                const fingerprint = upload.fingerprint
+                    ? `<div class="muted mono">指纹 ${esc(upload.fingerprint)}</div>` : '';
+                const reports = upload.report_count == null
+                    ? '' : `<div class="muted">已入库 ${upload.report_count} 条</div>`;
+                return `<tr>
+                    <td><span class="code-badge">${esc(upload.code)}</span></td>
+                    <td>${esc(upload.created_at)}</td>
+                    <td>${content}</td>
+                    <td>${version}${mapLine}${hashLine}</td>
+                    <td>${position}${fingerprint}${reports}</td>
+                    <td>${attributionBadge(upload.attribution)}${confidenceText(upload.confidence)}</td>
+                    <td>${rawStatus(upload)}</td>
+                    <td>
+                        <button class="small" data-action="detail" data-code="${esc(upload.code)}">详情</button>
+                        <button class="small ghost" data-action="archive" data-code="${esc(upload.code)}" ${upload.raw_available ? '' : 'disabled'}>下载</button>
+                        <button class="small danger" data-action="delete" data-code="${esc(upload.code)}" ${upload.raw_available ? '' : 'disabled'}>删除</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function updatePager() {
+            const start = state.total ? state.offset + 1 : 0;
+            const end = Math.min(state.offset + state.limit, state.total);
+            $('page-label').textContent = `第 ${start}-${end} 条 / 共 ${state.total} 条`;
+            $('prev-btn').disabled = state.offset <= 0;
+            $('next-btn').disabled = state.offset + state.limit >= state.total;
+        }
+
+        async function loadList() {
+            showAlert('list-alert', '');
+            const params = new URLSearchParams();
+            const keyword = $('q-input').value.trim();
+            const version = $('version-input').value.trim();
+            const attribution = $('attribution-select').value;
+            const hasKk = $('kk-select').value;
+            const raw = $('raw-select').value;
+            if (keyword) params.set('q', keyword);
+            if (version) params.set('version', version);
+            if (attribution) params.set('attribution', attribution);
+            if (hasKk) params.set('has_kk', hasKk);
+            if (raw) params.set('raw', raw);
+            params.set('limit', String(state.limit));
+            params.set('offset', String(state.offset));
+
+            $('search-btn').disabled = true;
+            try {
+                const data = await api('/api/admin/uploads?' + params.toString());
+                state.total = data.total;
+                renderRows(data.items);
+                $('list-summary').textContent = `共 ${data.total} 条上传记录`;
+                updatePager();
+                $('auth-card').hidden = true;
+                $('main').hidden = false;
+                showAlert('auth-alert', '');
+            } catch (error) {
+                if (error.status === 403 || error.status === 503) {
+                    $('main').hidden = true;
+                    $('auth-card').hidden = false;
+                    showAlert('auth-alert', error.message, true);
+                } else {
+                    showAlert('list-alert', error.message, true);
+                }
+            } finally {
+                $('search-btn').disabled = false;
+            }
+        }
+
+        async function downloadArchive(code) {
+            try {
+                const response = await fetch(`/api/admin/uploads/${code}/archive`, { headers: headers() });
+                if (!response.ok) {
+                    let message = `下载失败（${response.status}）`;
+                    try {
+                        const data = await response.json();
+                        message = data.message || message;
+                    } catch (err) { /* 非 JSON 响应 */ }
+                    toast(message, true);
+                    return;
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `war3-upload-${code}.zip`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+            } catch (error) {
+                toast(`下载失败：${error.message}`, true);
+            }
+        }
+
+        async function deleteUpload(code) {
+            const confirmed = await askConfirm(
+                `确定删除上传码 ${code} 的原始文件吗？\n\n统计与诊断元数据会保留，但原始文件删除后无法恢复。`);
+            if (!confirmed) return;
+            try {
+                await api(`/api/admin/uploads/${code}/delete`, { method: 'POST' });
+                toast(`上传码 ${code} 的原始文件已删除。`);
+                await loadList();
+                if (state.detailCode === code) {
+                    await openDetail(code);
+                }
+            } catch (error) {
+                toast(`删除失败：${error.message}`, true);
+            }
+        }
+
+        function metaItem(label, value) {
+            return `<div class="meta-item"><div class="label">${esc(label)}</div>
+                    <div class="value">${value == null || value === '' ? '—' : esc(value)}</div></div>`;
+        }
+
+        function renderDetail(data) {
+            const upload = data.upload;
+            const files = data.files || [];
+            const reports = data.reports || [];
+            const audits = data.audits || [];
+
+            const meta = [
+                metaItem('上传码', upload.code),
+                metaItem('上传时间', upload.created_at),
+                metaItem('保留至', upload.expires_at),
+                metaItem('原始文件', upload.raw_available ? '可用' : `已删除（${upload.raw_deleted_at || ''}）`),
+                metaItem('文件数 / 大小', `${upload.file_count || 0} 个 / ${fmtBytes(upload.total_bytes)}`),
+                metaItem('IP 哈希', upload.ip_hash),
+                metaItem('版本', upload.game_version),
+                metaItem('地图', upload.map_name),
+                metaItem('地图 MD5', upload.map_hash),
+                metaItem('模块内偏移', upload.module ? `${upload.module}+${upload.relative_offset || ''}` : upload.relative_offset),
+                metaItem('栈指纹', upload.fingerprint),
+                metaItem('归属 / 置信度', upload.attribution
+                    ? `${upload.attribution}${upload.confidence == null ? '' : ' / ' + Math.round(Number(upload.confidence) * 100) + '%'}`
+                    : null),
+                metaItem('KK 会话', upload.kk_session),
+                metaItem('入库报告数', upload.report_count == null ? '未入库' : String(upload.report_count))
+            ].join('');
+
+            const fileRows = files.length ? files.map((file) => {
+                const binary = /\.(dmp|mdmp|bin)$/i.test(file.path);
+                return `<div class="file-row">
+                    <span class="file-path">${esc(file.path)}</span>
+                    <span class="muted">${fmtBytes(file.size)}</span>
+                    <button class="small ghost" data-file-preview="${esc(file.path)}" ${binary ? 'disabled title="二进制文件不支持预览"' : ''}>预览</button>
+                    <button class="small" data-file-download="${esc(file.path)}">下载</button>
+                </div>`;
+            }).join('') : '<p class="empty">原始文件已删除或不存在</p>';
+
+            const reportRows = reports.length ? reports.map((report) => {
+                const position = report.relative_offset
+                    ? `${esc(report.module || '?')}+${esc(report.relative_offset)}` : '无偏移';
+                return `<div class="report-item">
+                    <div>
+                        <strong>#${report.id}</strong>
+                        <span class="badge badge-info">${esc(report.game_version || '版本未知')}</span>
+                        <span class="muted">${esc(report.map_name || '地图未知')}</span>
+                        <span class="mono muted">${position}</span>
+                        <span class="muted">· 指纹 ${esc(report.fingerprint || '—')}</span>
+                    </div>
+                    <div>${attributionBadge(report.attribution)}${confidenceText(report.confidence)}</div>
+                    <div class="analysis">${esc(report.analysis_result || '')}</div>
+                </div>`;
+            }).join('') : '<p class="empty">该上传尚未入库；可点击下方“补跑入库”。</p>';
+
+            const auditRows = audits.length ? audits.map((audit) => (
+                `<div class="muted">${esc(audit.created_at)} · ${esc(audit.action)} · ${esc(audit.detail || '')}</div>`
+            )).join('') : '<p class="muted">暂无操作记录</p>';
+
+            return `${meta}
+                <h3>崩溃报告（服务端诊断）</h3>
+                ${reportRows}
+                <div class="toolbar" style="margin-top: 10px;">
+                    <button class="small ghost" id="reingest-btn" ${upload.raw_available ? '' : 'disabled'}>补跑入库</button>
+                </div>
+                <h3>原始文件</h3>
+                ${fileRows}
+                <div class="preview-box" id="preview-box" hidden>
+                    <div class="muted" id="preview-label"></div>
+                    <pre id="preview-text"></pre>
+                </div>
+                <h3>操作记录</h3>
+                ${auditRows}`;
+        }
+
+        async function openDetail(code) {
+            state.detailCode = code;
+            $('detail-title').textContent = `上传详情 ${code}`;
+            $('detail-content').innerHTML = '<p class="muted">加载中…</p>';
+            $('detail-modal').hidden = false;
+            try {
+                const data = await api(`/api/admin/uploads/${code}`);
+                $('detail-content').innerHTML = renderDetail(data);
+            } catch (error) {
+                $('detail-content').innerHTML = `<div class="alert show error">${esc(error.message)}</div>`;
+            }
+        }
+
+        async function previewFile(code, path) {
+            const box = $('preview-box');
+            const label = $('preview-label');
+            const text = $('preview-text');
+            label.textContent = `预览 ${path}`;
+            text.textContent = '加载中…';
+            box.hidden = false;
+            try {
+                const data = await api(`/api/admin/uploads/${code}/preview?path=${encodeURIComponent(path)}`);
+                text.textContent = data.text || '（空文件）';
+                if (data.truncated) {
+                    label.textContent += '（仅显示前 512 KB，完整内容请下载）';
+                }
+            } catch (error) {
+                text.textContent = `预览失败：${error.message}`;
+            }
+        }
+
+        async function downloadFile(code, path) {
+            try {
+                const response = await fetch(
+                    `/api/admin/uploads/${code}/file?path=${encodeURIComponent(path)}`,
+                    { headers: headers() });
+                if (!response.ok) {
+                    let message = `下载失败（${response.status}）`;
+                    try {
+                        const data = await response.json();
+                        message = data.message || message;
+                    } catch (err) { /* 非 JSON 响应 */ }
+                    toast(message, true);
+                    return;
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = path.split('/').pop() || 'download';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+            } catch (error) {
+                toast(`下载失败：${error.message}`, true);
+            }
+        }
+
+        async function reingest(code) {
+            try {
+                const data = await api(`/api/admin/uploads/${code}/reingest`, { method: 'POST' });
+                toast(`补跑完成：新增 ${data.inserted} 条，重复 ${data.duplicates} 条。`);
+                await openDetail(code);
+                await loadList();
+            } catch (error) {
+                toast(`补跑失败：${error.message}`, true);
+            }
+        }
+
+        $('token-btn').addEventListener('click', async () => {
+            const value = $('token-input').value.trim();
+            if (!value) {
+                showAlert('auth-alert', '请先填写管理令牌', true);
+                return;
+            }
+            state.token = value;
+            sessionStorage.setItem(TOKEN_KEY, value);
+            state.offset = 0;
+            await loadList();
+        });
+
+        $('token-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') $('token-btn').click();
+        });
+
+        $('token-clear').addEventListener('click', () => {
+            sessionStorage.removeItem(TOKEN_KEY);
+            state.token = '';
+            $('token-input').value = '';
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            showAlert('auth-alert', '令牌已清除', false);
+        });
+
+        $('logout-btn').addEventListener('click', () => {
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            $('token-input').value = state.token;
+        });
+
+        $('search-btn').addEventListener('click', () => {
+            state.offset = 0;
+            loadList();
+        });
+
+        $('refresh-btn').addEventListener('click', loadList);
+
+        $('prev-btn').addEventListener('click', () => {
+            state.offset = Math.max(0, state.offset - state.limit);
+            loadList();
+        });
+
+        $('next-btn').addEventListener('click', () => {
+            state.offset += state.limit;
+            loadList();
+        });
+
+        $('upload-rows').addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+            const code = button.dataset.code;
+            const action = button.dataset.action;
+            if (action === 'detail') openDetail(code);
+            else if (action === 'archive') downloadArchive(code);
+            else if (action === 'delete') deleteUpload(code);
+        });
+
+        $('detail-close').addEventListener('click', () => {
+            $('detail-modal').hidden = true;
+            state.detailCode = null;
+        });
+
+        $('detail-modal').addEventListener('click', (event) => {
+            if (event.target === $('detail-modal')) {
+                $('detail-modal').hidden = true;
+                state.detailCode = null;
+            }
+        });
+
+        $('confirm-cancel').addEventListener('click', () => closeConfirm(false));
+        $('confirm-ok').addEventListener('click', () => closeConfirm(true));
+        $('confirm-modal').addEventListener('click', (event) => {
+            if (event.target === $('confirm-modal')) closeConfirm(false);
+        });
+
+        $('detail-content').addEventListener('click', (event) => {
+            const preview = event.target.closest('button[data-file-preview]');
+            if (preview) {
+                previewFile(state.detailCode, preview.dataset.filePreview);
+                return;
+            }
+            const download = event.target.closest('button[data-file-download]');
+            if (download) {
+                downloadFile(state.detailCode, download.dataset.fileDownload);
+                return;
+            }
+            if (event.target.id === 'reingest-btn') {
+                reingest(state.detailCode);
+            }
+        });
+
+        if (state.token) {
+            $('token-input').value = state.token;
+            loadList();
+        }
+    </script>
+</body>
+</html>

@@ -8,6 +8,7 @@
 3. **大数据展示**：通过 Web 界面展示崩溃高发地图、常见崩溃原因统计及实时流水，流水含版本、归属与栈指纹。
 4. **聚合统计**：按「地图身份 + 栈指纹」聚合相同崩溃，记录发生次数与作者标注位。
 5. **原始日志上传**：网页收集崩溃记录与 KK 平台会话日志，返回 6 位上传码；原始文件私有保存 7~15 天后自动删除。
+6. **服务端入库与管理端**：网页上传的日志在服务端重新诊断并写入报告与聚合；维护者可用令牌保护的 `/admin/uploads` 查看、预览、下载与删除原始文件，操作全程审计。
 
 ## 上报字段（P2.1）
 `/api/report` 在原有 `map / os / log_content / crash_address / analysis_result` 基础上新增：
@@ -82,7 +83,7 @@ python server/app.py
 - 案例缓存只作为候选，不自动写入全局 `knowledge.json`；由维护者复核后合并，避免单张地图的个案污染全局偏移结论。
 - 全量重建聚合表时会保留标注内容、来源、置信度、标注人与时间。
 
-## 原始日志上传（P2.5）
+## 原始日志上传（P2.6）
 面向玩家的兜底采集入口：网页上传崩溃记录文件夹，必要时附加 KK 对战平台会话日志，返回 6 位上传码便于群里报码和后续查询。
 
 ### 页面与接口
@@ -114,12 +115,54 @@ python server/app.py
 | `WAR3_RAW_RETENTION_DAYS` | `14` | 原始文件保留天数，自动收敛到 7~15 |
 | `WAR3_UPLOAD_RATE` | `10` | 每 IP 每小时上传次数上限 |
 | `WAR3_UPLOAD_SALT` | 启动时随机 | IP 哈希盐；多实例部署时需固定为同一值 |
+| `WAR3_ADMIN_TOKEN` | 未设置 | 管理端与管理接口令牌；未设置时管理端禁用（503） |
 | `WAR3_DB_PATH` | `server/crash_data.db` | SQLite 路径，便于测试或迁移 |
 
 ### 部署注意
 - 反向代理（Nginx）需把 `client_max_body_size` 调到 **55m** 以上，否则 50 MB 上传会被前置代理拦截。
 - 反向代理后 `request.remote_addr` 会变成代理地址；如需按真实 IP 限流，请在代理层完成限流，或改为可信的 `X-Forwarded-For` 解析。
 - KK 平台只保留最近会话日志，崩溃后应尽快上传；网页已提示用户先不要重启平台。
+
+## 上传入库（P2.7）
+上传成功的崩溃日志会在服务端复用客户端的纯 Python 模块（`core.logtext`、`core.stack_parser`、`core.environment`、`core.diagnosis`、`core.fingerprint`、`core.knowledge`）重新诊断，不再依赖浏览器传来的结论。
+
+- 诊断流程与客户端一致：提取崩溃地址 → 解析完整调用栈 → 定位崩溃帧或首个有效帧 → 换算 `.text` RVA（逻辑地址 + 0x1000）→ 明文原因、环境分析、版本锁定与知识库查表 → 栈指纹 → 四行结论。
+- 每份崩溃日志写入 `crash_reports`，新增 `upload_code` 关联上传码；`content_hash` 唯一约束保证同一日志只入库一次，重复上传只补齐空缺字段。
+- 入库后按「地图身份 + 栈指纹」累加 `crash_aggregates`；重复内容触发 `rebuild_aggregates()` 重建，作者标注不受影响。
+- 代表记录（优先有 RVA、其次含 dmp、再次文件更多）的诊断结果回写 `raw_uploads`，上传码查询页与自动上报展示同一口径的版本、地图、偏移、指纹与归属。
+- 入库使用 SQLite `SAVEPOINT` 隔离：即使诊断或入库失败，用户仍能拿到上传码，原始文件也照常保留。
+- 平台日志单独上传（无崩溃日志）不入库，只作为地图与版本线索。
+
+## 维护者管理端（P2.7）
+访问 `/admin/uploads`。管理端只面向维护者，默认关闭：未设置 `WAR3_ADMIN_TOKEN` 时所有管理接口返回 503。
+
+```bash
+# Linux / macOS
+export WAR3_ADMIN_TOKEN='请换成足够长的随机字符串'
+
+# Windows PowerShell
+$env:WAR3_ADMIN_TOKEN='请换成足够长的随机字符串'
+```
+
+页面首次打开时填写令牌，保存在浏览器 `sessionStorage`，后续请求通过 `X-Admin-Token` 头发送；令牌错误返回 403。建议部署在 HTTPS 之后。
+
+### 接口
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/admin/uploads` | 列表。支持 `q`（码/地图/模块/偏移/指纹/分析文本）、`version`、`attribution`、`has_kk`（0/1）、`raw`（1 可用 / 0 已删除）、`limit`（1~200，默认 50）、`offset` |
+| `GET /api/admin/uploads/<code>` | 详情：上传元数据、原始文件清单、关联崩溃报告、审计记录（最近 40 条） |
+| `GET /api/admin/uploads/<code>/preview?path=<相对路径>` | 文本预览，单次最多 **512 KB**，返回截断标记；dmp/bin 返回 415 |
+| `GET /api/admin/uploads/<code>/file?path=<相对路径>` | 单文件下载（`Content-Disposition: attachment`） |
+| `GET /api/admin/uploads/<code>/archive` | 整包 zip 下载，在内存中打包，不产生临时文件 |
+| `POST /api/admin/uploads/<code>/delete` | 删除原始文件：删除上传目录并写入 `raw_deleted_at`；诊断与聚合元数据保留 |
+| `POST /api/admin/uploads/<code>/reingest` | 补跑入库，用于 P2.7 之前的上传或入库失败记录；只补齐空缺字段 |
+
+### 安全与审计
+- 文件路径参数只能是上传目录内的相对路径，绝对路径、`..` 穿越与目录外软链均被拒绝。
+- 原始文件已删除时，预览 / 下载 / 整包 / 补跑返回 410。
+- `admin_audit` 表记录 `preview` / `download_file` / `download_archive` / `delete_raw` / `reingest`，含时间、上传码、明细与 IP 哈希（使用 `WAR3_UPLOAD_SALT`，不存明文 IP）。
+- 删除只影响原始文件；`crash_reports` 与聚合统计是脱敏派生数据，会继续保留，避免历史统计被单次删除篡改。
+- 管理端接口不复用公开的上传码查询逻辑，必须通过令牌校验。
 
 ## 快速启动
 1. 确保已安装 Python 环境。
@@ -142,6 +185,7 @@ python server/app.py
 - `static/author.html`: 作者查询与标注页。
 - `static/upload.html`: 崩溃日志与 KK 会话日志上传页。
 - `static/upload_status.html`: 上传码查询页。
+- `static/admin_uploads.html`: 维护者管理端（令牌保护）。
 - `static/md5.js`: 浏览器本地地图 MD5 计算。
 
 ## 客户端集成
