@@ -19,10 +19,10 @@ def _human_size(size):
 
 
 class UploadLogsDialog(tk.Toplevel):
-    def __init__(self, parent, app):
+    def __init__(self, parent, app, preferred_log=None):
         super().__init__(parent)
         self.app = app
-        self.title("上传崩溃日志给维护者")
+        self.title("上传崩溃日志到服务器")
         self.geometry("680x620")
         self.resizable(False, True)
         self.transient(parent)
@@ -35,7 +35,10 @@ class UploadLogsDialog(tk.Toplevel):
         self.code_var = tk.StringVar(value="")
 
         self._build()
-        self._load_latest()
+        if preferred_log and os.path.isfile(preferred_log):
+            self.set_crash_log(preferred_log)
+        else:
+            self._load_latest()
         self._detect_kk()
 
     # ---------- 界面 ----------
@@ -81,7 +84,7 @@ class UploadLogsDialog(tk.Toplevel):
                  "这些日志可能包含 Windows 用户名、计算机名、本地路径或平台昵称。\n"
                  "不会上传：地图文件、配置、历史库或其它本机文件。\n"
                  "原始日志由服务端私有保存 14 天后自动删除；上传成功会返回 6 位上传码，"
-                 "可发给维护者在群里核对。",
+                 "可直接用于查询处理进度。",
             fg="#555555", anchor="w", justify=tk.LEFT, wraplength=620).pack(
             fill=tk.X)
 
@@ -145,11 +148,8 @@ class UploadLogsDialog(tk.Toplevel):
             self._append_log("[!] 未自动识别 KK 日志目录；如需要请手动选择。")
         self._refresh_plan()
 
-    def _browse_crash(self):
-        path = filedialog.askopenfilename(
-            title="选择崩溃日志",
-            filetypes=[("崩溃日志", "*.txt"), ("所有文件", "*.*")])
-        if not path:
+    def set_crash_log(self, path):
+        if not path or not os.path.isfile(path):
             return
         try:
             files = uploader.collect_crash_files(path)
@@ -170,6 +170,13 @@ class UploadLogsDialog(tk.Toplevel):
             text=f"{self.crash_info['name']}（{_human_size(self.crash_info['size'])}，"
                  f"{modified}，{dmp}）", fg="#2c3e50")
         self._refresh_plan()
+
+    def _browse_crash(self):
+        path = filedialog.askopenfilename(
+            title="选择崩溃日志",
+            filetypes=[("崩溃日志", "*.txt"), ("所有文件", "*.*")])
+        if path:
+            self.set_crash_log(path)
 
     def _browse_kk(self):
         initial = self.kk_path.get().strip() or None

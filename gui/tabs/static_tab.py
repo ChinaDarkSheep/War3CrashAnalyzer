@@ -1,238 +1,267 @@
 import os
+import time
 import threading
 import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext
 from gui.tabs.base import BaseTab
 from core.auditor import Auditor
-from core.bundle import default_bundle_name, export_bundle
+
 
 class StaticTab(BaseTab):
     def setup_ui(self):
         self.auditor = Auditor(self.log, self.update_status, self.app.data_dir)
-        
+        self.selected_log_path = None
+        self.diagnosed_log_path = None
+        self._log_choices = {}
+
         pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
         pane.pack(fill=tk.BOTH, expand=True)
+        self.pane = pane
 
         top_container = tk.Frame(pane, bg="#f5f6f7", padx=5, pady=5)
         pane.add(top_container, weight=1)
+        self.top_container = top_container
 
-        top_frame = tk.LabelFrame(top_container, text=" 核心操作与配置 ", bg="#f5f6f7", pady=5, padx=10)
-        top_frame.pack(fill=tk.X, pady=2)
-        
-        tk.Label(top_frame, text="魔兽目录:", bg="#f5f6f7").grid(row=0, column=0, sticky=tk.W)
-        tk.Entry(top_frame, textvariable=self.app.war3_path).grid(row=0, column=1, sticky=tk.EW, padx=5)
-        tk.Button(top_frame, text="浏览", command=self.browse_war3, width=8).grid(row=0, column=2)
-        
-        tk.Label(top_frame, text="地图文件:", bg="#f5f6f7").grid(row=1, column=0, sticky=tk.W, pady=5)
-        tk.Entry(top_frame, textvariable=self.app.map_path).grid(row=1, column=1, sticky=tk.EW, padx=5)
-        tk.Button(top_frame, text="浏览", command=self.browse_map, width=8).grid(row=1, column=2)
-        top_frame.columnconfigure(1, weight=1)
+        card = tk.LabelFrame(
+            top_container, text=" 崩溃诊断（按步骤操作） ", bg="#ffffff",
+            pady=10, padx=14, font=("微软雅黑", 10, "bold"), fg="#2c3e50")
+        card.pack(fill=tk.X, pady=(2, 4))
 
-        btn_container = tk.Frame(top_frame, bg="#f5f6f7")
-        btn_container.grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=5)
-        
-        self.deep_extract_btn = tk.Button(btn_container, text="🚀 强力提取", command=self.start_deep_extraction, bg="#e74c3c", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.deep_extract_btn.pack(side=tk.LEFT, padx=2)
+        step1 = tk.Frame(card, bg="#ffffff")
+        step1.pack(fill=tk.X)
+        tk.Label(step1, text="第 1 步", bg="#ffffff", fg="#e67e22",
+                 font=("微软雅黑", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(step1, text="确认魔兽安装目录", bg="#ffffff", fg="#2c3e50",
+                 font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        self.path_status = tk.Label(step1, text="", bg="#ffffff",
+                                    font=("微软雅黑", 9, "bold"))
+        self.path_status.pack(side=tk.RIGHT)
 
-        self.audit_btn = tk.Button(btn_container, text="🔍 资源审计", command=self.start_audit, bg="#2ecc71", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.audit_btn.pack(side=tk.LEFT, padx=2)
+        path_row = tk.Frame(card, bg="#ffffff")
+        path_row.pack(fill=tk.X, pady=(6, 12))
+        tk.Entry(path_row, textvariable=self.app.war3_path).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+        tk.Button(path_row, text="选择目录", command=self.browse_war3,
+                  width=10).pack(side=tk.LEFT, padx=(8, 0))
 
-        self.jass_audit_btn = tk.Button(btn_container, text="📜 JASS 审计", command=self.start_jass_audit, bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.jass_audit_btn.pack(side=tk.LEFT, padx=2)
+        step2 = tk.Frame(card, bg="#ffffff")
+        step2.pack(fill=tk.X)
+        tk.Label(step2, text="第 2 步", bg="#ffffff", fg="#e67e22",
+                 font=("微软雅黑", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(step2, text="选择日志并开始诊断", bg="#ffffff", fg="#2c3e50",
+                 font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(8, 0))
 
-        self.locator_btn = tk.Button(btn_container, text="指纹定位", command=self.open_locator, bg="#1abc9c", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.locator_btn.pack(side=tk.LEFT, padx=2)
+        log_row = tk.Frame(card, bg="#ffffff")
+        log_row.pack(fill=tk.X, pady=(6, 0))
+        tk.Label(log_row, text="日志来源：", bg="#ffffff", fg="#2c3e50",
+                 font=("微软雅黑", 9)).pack(side=tk.LEFT)
+        self.log_choice_var = tk.StringVar(value="自动：最新一份日志")
+        self.log_combo = ttk.Combobox(
+            log_row, textvariable=self.log_choice_var, state="readonly",
+            values=["自动：最新一份日志"])
+        self.log_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        self.log_combo.bind("<<ComboboxSelected>>", self._on_log_choice)
+        self.log_combo.configure(postcommand=self._refresh_log_options)
+        tk.Button(log_row, text="浏览…", command=self.browse_log,
+                  width=8).pack(side=tk.LEFT, padx=(8, 0))
 
-        self.crash_btn = tk.Button(btn_container, text="📄 诊断日志", command=self.analyze_last_crash, bg="#9b59b6", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.crash_btn.pack(side=tk.LEFT, padx=2)
+        self.crash_btn = tk.Button(
+            card, text="🔍 开始诊断最新崩溃", command=self.analyze_last_crash,
+            bg="#9b59b6", fg="white", font=("微软雅黑", 12, "bold"),
+            height=2, cursor="hand2", relief=tk.RAISED)
+        self.crash_btn.pack(fill=tk.X, pady=(8, 0))
+        tk.Label(card, text="默认诊断 Errors 目录里最新的一份日志；也可以在上方切换或浏览其他日志。",
+                 bg="#ffffff", fg="#7f8c8d", font=("微软雅黑", 8),
+                 anchor=tk.W).pack(fill=tk.X, pady=(4, 0))
 
-        self.history_btn = tk.Button(btn_container, text="📊 崩溃历史", command=self.open_history, bg="#607d8b", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.history_btn.pack(side=tk.LEFT, padx=2)
+        self.step3_frame = tk.Frame(card, bg="#ffffff")
+        tk.Frame(self.step3_frame, bg="#ecf0f1", height=1).pack(fill=tk.X, pady=(0, 8))
+        step3_head = tk.Frame(self.step3_frame, bg="#ffffff")
+        step3_head.pack(fill=tk.X)
+        tk.Label(step3_head, text="第 3 步", bg="#ffffff", fg="#e67e22",
+                 font=("微软雅黑", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(step3_head, text="上传本次崩溃样本（建议）", bg="#ffffff",
+                 fg="#2c3e50", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(self.step3_frame,
+                 text="把这次崩溃日志上传到服务器，帮助我们采集错误样本、构建大数据平台，"
+                      "让后续的故障定位更加精准。",
+                 bg="#ffffff", fg="#7f8c8d", font=("微软雅黑", 9),
+                 wraplength=820, justify=tk.LEFT, anchor=tk.W).pack(
+                     fill=tk.X, pady=(4, 6))
+        self.upload_btn = tk.Button(
+            self.step3_frame, text="⬆ 上传服务器",
+            command=self.upload_diagnosed_log, bg="#2980b9", fg="white",
+            font=("微软雅黑", 11, "bold"), height=2, cursor="hand2")
+        self.upload_btn.pack(fill=tk.X)
+        tk.Label(self.step3_frame,
+                 text="上传成功后会获得 6 位上传码；日志可能包含 Windows 用户名、计算机名和本地路径。",
+                 bg="#ffffff", fg="#7f8c8d", font=("微软雅黑", 8),
+                 anchor=tk.W).pack(fill=tk.X, pady=(4, 0))
 
-        self.export_bundle_btn = tk.Button(btn_container, text="📦 诊断包", command=self.export_diagnostic_bundle, bg="#16a085", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.export_bundle_btn.pack(side=tk.LEFT, padx=2)
-
-        self.desync_log_btn = tk.Button(btn_container, text="🌐 同步日志", command=self.start_desync_log_analysis, bg="#f39c12", fg="white", font=("微软雅黑", 9, "bold"), width=12)
-        self.desync_log_btn.pack(side=tk.LEFT, padx=2)
-
-        self.report_btn = tk.Menubutton(
-            btn_container, text="📤 发送给维护者", bg="#34495e", fg="white",
-            font=("微软雅黑", 9, "bold"), width=14, relief=tk.RAISED)
-        self.report_menu = tk.Menu(self.report_btn, tearoff=0)
-        self.report_menu.add_command(
-            label="自动上报诊断数据", command=self.app.report_crash_to_server)
-        self.report_menu.add_command(
-            label="上传日志并获取上传码", command=self.app.open_upload_dialog)
-        self.report_menu.add_command(
-            label="查询上传码状态", command=self.app.open_upload_status_dialog)
-        self.report_btn.config(menu=self.report_menu)
-        self.report_btn.pack(side=tk.LEFT, padx=2)
-
-        log_frame = tk.LabelFrame(pane, text=" 📜 实时诊断日志 ", bg="#f5f6f7")
+        log_frame = tk.LabelFrame(pane, text=" 📜 诊断日志 ", bg="#f5f6f7")
         pane.add(log_frame, weight=2)
-        
-        self.report_area = scrolledtext.ScrolledText(log_frame, font=("Consolas", 10), bg="#ffffff")
+
+        self.report_area = scrolledtext.ScrolledText(
+            log_frame, font=("Consolas", 10), bg="#ffffff")
         self.report_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.app.report_area = self.report_area
 
+        self.app.war3_path.trace_add("write", self._refresh_path_status)
+        self._refresh_path_status()
+        self._refresh_log_options()
+
+    def _refresh_path_status(self, *_args):
+        path = self.app.war3_path.get().strip('"')
+        if not path:
+            self.path_status.config(text="尚未设置", fg="#e74c3c")
+        elif os.path.isdir(path):
+            self.path_status.config(text="✓ 已设置", fg="#27ae60")
+        else:
+            self.path_status.config(text="⚠ 目录不存在", fg="#e67e22")
+
+    def _refresh_log_options(self):
+        choices = {"自动：最新一份日志": None}
+        values = ["自动：最新一份日志"]
+        war3_dir = self.app.war3_path.get().strip('"')
+        errors_dir = os.path.join(war3_dir, "Errors") if war3_dir else ""
+        entries = []
+        if errors_dir and os.path.isdir(errors_dir):
+            for name in os.listdir(errors_dir):
+                if not name.lower().endswith(".txt"):
+                    continue
+                path = os.path.join(errors_dir, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    mtime = 0
+                entries.append((mtime, name, path))
+        entries.sort(key=lambda item: item[0], reverse=True)
+        for mtime, name, path in entries:
+            if mtime:
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+                label = f"{stamp}  {name}"
+            else:
+                label = name
+            if label in choices:
+                label = f"{label}  ({path})"
+            choices[label] = path
+            values.append(label)
+
+        selected = self.selected_log_path
+        if selected and selected not in choices.values():
+            if os.path.isfile(selected):
+                label = f"手动选择：{os.path.basename(selected)}"
+                choices[label] = selected
+                values.append(label)
+                self.log_choice_var.set(label)
+            else:
+                self.selected_log_path = None
+                self.log_choice_var.set("自动：最新一份日志")
+
+        self._log_choices = choices
+        self.log_combo.config(values=values)
+
+    def _on_log_choice(self, _event=None):
+        self.selected_log_path = self._log_choices.get(
+            self.log_choice_var.get())
+        self._restore_crash_btn()
+
+    def browse_log(self):
+        path = filedialog.askopenfilename(
+            title="选择崩溃日志",
+            filetypes=[("崩溃日志", "*.txt"), ("所有文件", "*.*")])
+        if not path:
+            return
+        self.selected_log_path = path
+        self._refresh_log_options()
+        self.log_choice_var.set(f"手动选择：{os.path.basename(path)}")
+        self._restore_crash_btn()
+        self.update_status(f"已选择日志: {os.path.basename(path)}")
+
+    def _restore_crash_btn(self):
+        text = ("🔍 诊断所选日志" if self.selected_log_path
+                else "🔍 开始诊断最新崩溃")
+        try:
+            self.crash_btn.config(state=tk.NORMAL, text=text)
+        except tk.TclError:
+            pass
+
+    def _selected_or_latest(self):
+        if self.selected_log_path and os.path.isfile(self.selected_log_path):
+            return self.selected_log_path
+        war3_dir = self.app.war3_path.get().strip('"')
+        errors_dir = os.path.join(war3_dir, "Errors") if war3_dir else ""
+        if not errors_dir or not os.path.isdir(errors_dir):
+            return None
+        candidates = []
+        for name in os.listdir(errors_dir):
+            if not name.lower().endswith(".txt"):
+                continue
+            path = os.path.join(errors_dir, name)
+            try:
+                candidates.append((os.path.getmtime(path), path))
+            except OSError:
+                continue
+        if not candidates:
+            return None
+        return max(candidates)[1]
+
+    def _fit_top_pane(self):
+        self.update_idletasks()
+        try:
+            self.pane.sashpos(0, self.top_container.winfo_reqheight())
+        except tk.TclError:
+            pass
+
     def browse_war3(self):
         path = filedialog.askdirectory(title="选择魔兽争霸 III 安装根目录 (包含 war3.exe)")
-        if path: 
+        if path:
             war3_path = path.replace('/', '\\')
             # 检测目录下是否存在核心程序
             has_exe = any(os.path.exists(os.path.join(war3_path, exe)) for exe in ["war3.exe", "Warcraft III.exe", "War3.exe"])
-            
+
             if not has_exe:
                 if not tk.messagebox.askyesno("目录警告", "选中的目录下未找到 war3.exe 或 Warcraft III.exe，这可能导致分析功能失效。\n\n是否仍要选择该目录？"):
                     return
 
+            self.selected_log_path = None
             self.app.war3_path.set(war3_path)
             self.app.save_config()
+            self._refresh_log_options()
+            self._restore_crash_btn()
             self.update_status(f"魔兽目录已设置为: {os.path.basename(war3_path)}")
 
-    def browse_map(self):
-        path = filedialog.askopenfilename(filetypes=[("魔兽地图", "*.w3x;*.w3m")])
-        if path: 
-            self.app.map_path.set(path)
-            self.app.save_config()
-            self.update_status(f"地图文件已设置为: {os.path.basename(path)}")
-
-    def start_deep_extraction(self):
-        map_file = self.app.map_path.get().strip('"')
-        if not map_file or not os.path.exists(map_file):
-            tk.messagebox.showwarning("提示", "请先选择地图文件！")
-            return
-        self.deep_extract_btn.config(state=tk.DISABLED)
-        self.update_status("正在进行强力提取...")
-        threading.Thread(target=self.auditor.deep_extract_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.deep_extract_btn.config(state=tk.NORMAL)), 
-                         daemon=True).start()
-
-    def start_audit(self):
-        map_file = self.app.map_path.get().strip('"')
-        if not map_file or not os.path.exists(map_file):
-            tk.messagebox.showwarning("提示", "请先选择地图文件！")
-            return
-        self.audit_btn.config(state=tk.DISABLED)
-        self.update_status("正在进行资源审计...")
-        threading.Thread(target=self.auditor.audit_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.audit_btn.config(state=tk.NORMAL)), 
-                         daemon=True).start()
-
-    def start_jass_audit(self):
-        map_file = self.app.map_path.get().strip('"')
-        if not map_file or not os.path.exists(map_file):
-            tk.messagebox.showwarning("提示", "请先选择地图文件！")
-            return
-        self.jass_audit_btn.config(state=tk.DISABLED)
-        self.update_status("正在进行 JASS 审计...")
-        threading.Thread(target=self.auditor.jass_audit_worker, 
-                         args=(map_file, self.app.mpq_editor_path, self.app.data_dir, lambda: self.jass_audit_btn.config(state=tk.NORMAL)), 
-                         daemon=True).start()
-
-    def open_locator(self):
-        from gui.locator_dialog import FingerprintLocatorDialog
-        dialog = getattr(self, "locator_dialog", None)
-        if dialog is not None and dialog.winfo_exists():
-            dialog.lift()
-            dialog.focus_force()
-            return
-        self.locator_dialog = FingerprintLocatorDialog(self, self.app)
-
-    def open_history(self):
-        from gui.history_dialog import CrashHistoryDialog
-        dialog = getattr(self, "history_dialog", None)
-        if dialog is not None and dialog.winfo_exists():
-            dialog.deiconify()
-            dialog.lift()
-            dialog.focus_force()
-            dialog.refresh()
-            return
-        self.history_dialog = CrashHistoryDialog(self, self.app)
-
     def analyze_last_crash(self):
-        self.update_status("正在启动批量分析流程...")
-        self.crash_btn.config(state=tk.DISABLED)
-        
-        def run():
-            try:
-                res = self.auditor.analyze_last_crash(self.app.war3_path.get())
-                self.log(res)
-            except Exception as e:
-                self.log(f"[-] 分析过程出错: {e}")
-            finally:
-                self.app.root.after(0, lambda: self.crash_btn.config(state=tk.NORMAL))
-                self.update_status("崩溃日志分析完毕")
-        
-        threading.Thread(target=run, daemon=True).start()
-
-    def export_diagnostic_bundle(self):
-        war3_dir = self.app.war3_path.get().strip('"')
-        if not war3_dir or not os.path.isdir(war3_dir):
-            tk.messagebox.showwarning("提示", "请先设置正确的魔兽目录！")
-            return
-        errors_dir = os.path.join(war3_dir, "Errors")
-        logs = []
-        if os.path.isdir(errors_dir):
-            logs = [f for f in os.listdir(errors_dir)
-                    if f.lower().endswith(".txt")]
-        if not logs:
-            tk.messagebox.showinfo("提示", "未找到任何崩溃日志。")
+        target = self._selected_or_latest()
+        if not target:
+            tk.messagebox.showinfo(
+                "未找到崩溃日志",
+                "没有找到可诊断的日志。请先确认魔兽目录，或点击“浏览…”手动选择日志文件。")
             return
 
-        log_name = max(logs, key=lambda f: os.path.getmtime(
-            os.path.join(errors_dir, f)))
-        log_path = os.path.join(errors_dir, log_name)
-        map_path = self.app.map_path.get().strip('"')
-
-        try:
-            result = self.auditor.analyze_log_file(log_path)
-        except Exception as e:
-            tk.messagebox.showerror("导出失败", f"诊断日志时出错：{e}")
-            return
-
-        output = filedialog.asksaveasfilename(
-            title="保存诊断包",
-            defaultextension=".zip",
-            initialfile=default_bundle_name(result.get("map_name")),
-            filetypes=[("Zip 压缩包", "*.zip")])
-        if not output:
-            return
-
-        self.export_bundle_btn.config(state=tk.DISABLED)
-        self.update_status("正在生成诊断包...")
+        self.update_status("正在诊断...")
+        self.crash_btn.config(state=tk.DISABLED, text="正在诊断，请稍候...")
 
         def run():
             try:
-                _, summary = export_bundle(
-                    log_path, result, output, map_path or None)
-
-                def done():
-                    self.log(f"\n[+] 诊断包已生成: {output}")
-                    self.log(summary)
-                    self.update_status("诊断包已生成，摘要已复制到剪贴板")
-                    try:
-                        self.app.root.clipboard_clear()
-                        self.app.root.clipboard_append(summary)
-                    except Exception:
-                        pass
-                    self.export_bundle_btn.config(state=tk.NORMAL)
-                    tk.messagebox.showinfo(
-                        "导出完成",
-                        f"诊断包已生成：\n{output}\n\nQQ 群摘要已复制到剪贴板。")
-
-                self.app.root.after(0, done)
+                res = self.auditor.analyze_selected_log(target)
             except Exception as e:
-                def fail():
-                    self.update_status("诊断包生成失败")
-                    self.export_bundle_btn.config(state=tk.NORMAL)
-                    tk.messagebox.showerror("导出失败", str(e))
-
-                self.app.root.after(0, fail)
+                res = f"[-] 分析过程出错: {e}"
+            self.app.root.after(0, lambda: self._finish_diagnosis(res, target))
 
         threading.Thread(target=run, daemon=True).start()
 
-    def start_desync_log_analysis(self):
-        self.update_status("正在分析同步日志...")
-        self.auditor.desync_log_analysis(self.app.war3_path.get())
-        self.update_status("同步日志分析完毕")
+    def _finish_diagnosis(self, res, target):
+        self._restore_crash_btn()
+        self.update_status("崩溃日志分析完毕")
+        self.log(res)
+        self._refresh_log_options()
+        if res.startswith("[+]"):
+            self.diagnosed_log_path = target
+            self.step3_frame.pack(fill=tk.X, pady=(12, 0))
+            self._fit_top_pane()
+
+    def upload_diagnosed_log(self):
+        if not self.diagnosed_log_path:
+            return
+        self.app.open_upload_dialog(self.diagnosed_log_path)

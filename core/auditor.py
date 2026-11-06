@@ -656,91 +656,8 @@ class Auditor:
         fingerprint_stats = {}
         for idx, target_log in enumerate(target_logs):
             self.log(f"\n[*] [{idx+1}/{total}] 正在分析: {target_log['name']}")
-            latest_log = target_log["path"]
-            base_name = os.path.splitext(latest_log)[0]
-            dmp_file = base_name + ".dmp"
-            
-            analysis_summary = ""
             try:
-                # 1. 优先分析 .dmp 文件 (二进制分析)；回溯建指纹时只读文本，避免启动过慢
-                dmp_info = None
-                if os.path.exists(dmp_file) and not backfill:
-                    dmp_info = self._analyze_dmp(dmp_file)
-                dmp_analysis_success = dmp_info is not None
-                if dmp_info:
-                    analysis_summary = dmp_info["analysis"]
-
-                # 2. 传统文本日志分析 (逻辑降级/互补)
-                content = read_log(latest_log)
-                result = self.analyze_log_content(content)
-                result = self._merge_dmp(result, dmp_info)
-                addr = result["addr"]
-                relative_offset = result["relative_offset"]
-                analysis = result["analysis_text"]
-                log_map_name = result["map_name"]
-                log_mod_name = result["module_name"]
-                conc = result.get("conclusion")
-                detail_text = result.get("detail_text") or ""
-                
-                if log_map_name != "Unknown":
-                    self.log(f"[+] 从日志提取到地图: {log_map_name}")
-                
-                if log_mod_name != "Unknown" and not dmp_analysis_success:
-                    self.log(f"[+] 从日志定位到模块: {log_mod_name}")
-
-                if addr != "Unknown" and not dmp_analysis_success:
-                    self.log(f"[+] 捕获到原始崩溃地址: {addr}")
-                    if relative_offset:
-                        self.log(f"[+] 成功还原相对偏移量: {relative_offset}")
-
-                show_conclusion = bool(conc) and (
-                    not dmp_analysis_success or conc["attribution"] != "暂无法确定")
-                if show_conclusion:
-                    self.log("")
-                    for line in conc["text"].splitlines():
-                        self.log("  " + line)
-                    self.update_status(
-                        f"诊断：{conc['attribution']} · 置信度 {int(conc['confidence'] * 100)}%")
-                    analysis_summary = (analysis_summary + "\n" + analysis
-                                        if analysis_summary else analysis)
-                elif conc is None:
-                    self.log(f"[-] {analysis}")
-                    analysis_summary = (analysis_summary + "\n" + analysis
-                                        if analysis_summary else analysis)
-
-                if detail_text:
-                    self.log("[!] 补充依据：")
-                    self.log(f"      {detail_text}")
-                    if not show_conclusion:
-                        analysis_summary = (analysis_summary + "\n" + detail_text
-                                            if analysis_summary else detail_text)
-
-                # 栈指纹：同一版本 + 相同栈顶帧视为同一崩溃，按日志去重计数
-                fp = result.get("fingerprint")
-                if fp and self.history:
-                    stats = self.history.record_fingerprint(
-                        fp, target_log["name"], log_map_name,
-                        attribution=(conc or {}).get("attribution"),
-                        confidence=(conc or {}).get("confidence"))
-                    if stats:
-                        fingerprint_stats[stats["signature"]] = stats
-                        label = fp["version"] or "版本未知"
-                        map_part = (f"涉及 {stats['maps']} 张地图"
-                                    if stats["maps"] else "地图未知")
-                        if stats["new"]:
-                            self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
-                                     f"{fp['frame_count']} 帧）：累计第 "
-                                     f"{stats['samples']} 次，{map_part}")
-                        else:
-                            self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
-                                     f"{fp['frame_count']} 帧）：本日志已计入，累计 "
-                                     f"{stats['samples']} 次，{map_part}")
-
-                # 记录到历史库
-                if self.history:
-                    file_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
-                    self.history.mark_diagnosed(target_log['name'], file_hash, target_log['mtime'], analysis_summary)
-                    
+                self._diagnose_log_entry(target_log, backfill, fingerprint_stats)
             except Exception as e:
                 self.log(f"[-] [{idx+1}/{total}] 分析失败: {e}")
         
@@ -758,7 +675,120 @@ class Auditor:
 
         return f"[+] 批量诊断完成，共处理 {total} 份日志。"
 
+    def _diagnose_log_entry(self, target_log, backfill=False,
+                            fingerprint_stats=None):
+        """诊断单份日志并输出完整结论，记录指纹与历史。"""
+        latest_log = target_log["path"]
+        base_name = os.path.splitext(latest_log)[0]
+        dmp_file = base_name + ".dmp"
 
+        analysis_summary = ""
+        # 1. 优先分析 .dmp 文件 (二进制分析)；回溯建指纹时只读文本，避免启动过慢
+        dmp_info = None
+        if os.path.exists(dmp_file) and not backfill:
+            dmp_info = self._analyze_dmp(dmp_file)
+        dmp_analysis_success = dmp_info is not None
+        if dmp_info:
+            analysis_summary = dmp_info["analysis"]
+
+        # 2. 传统文本日志分析 (逻辑降级/互补)
+        content = read_log(latest_log)
+        result = self.analyze_log_content(content)
+        result = self._merge_dmp(result, dmp_info)
+        addr = result["addr"]
+        relative_offset = result["relative_offset"]
+        analysis = result["analysis_text"]
+        log_map_name = result["map_name"]
+        log_mod_name = result["module_name"]
+        conc = result.get("conclusion")
+        detail_text = result.get("detail_text") or ""
+
+        if log_map_name != "Unknown":
+            self.log(f"[+] 从日志提取到地图: {log_map_name}")
+
+        if log_mod_name != "Unknown" and not dmp_analysis_success:
+            self.log(f"[+] 从日志定位到模块: {log_mod_name}")
+
+        if addr != "Unknown" and not dmp_analysis_success:
+            self.log(f"[+] 捕获到原始崩溃地址: {addr}")
+            if relative_offset:
+                self.log(f"[+] 成功还原相对偏移量: {relative_offset}")
+
+        show_conclusion = bool(conc) and (
+            not dmp_analysis_success or conc["attribution"] != "暂无法确定")
+        if show_conclusion:
+            self.log("")
+            for line in conc["text"].splitlines():
+                self.log("  " + line)
+            self.update_status(
+                f"诊断：{conc['attribution']} · 置信度 {int(conc['confidence'] * 100)}%")
+            analysis_summary = (analysis_summary + "\n" + analysis
+                                if analysis_summary else analysis)
+        elif conc is None:
+            self.log(f"[-] {analysis}")
+            analysis_summary = (analysis_summary + "\n" + analysis
+                                if analysis_summary else analysis)
+
+        if detail_text:
+            self.log("[!] 补充依据：")
+            self.log(f"      {detail_text}")
+            if not show_conclusion:
+                analysis_summary = (analysis_summary + "\n" + detail_text
+                                    if analysis_summary else detail_text)
+
+        # 栈指纹：同一版本 + 相同栈顶帧视为同一崩溃，按日志去重计数
+        fp = result.get("fingerprint")
+        if fp and self.history:
+            stats = self.history.record_fingerprint(
+                fp, target_log["name"], log_map_name,
+                attribution=(conc or {}).get("attribution"),
+                confidence=(conc or {}).get("confidence"))
+            if stats:
+                if fingerprint_stats is not None:
+                    fingerprint_stats[stats["signature"]] = stats
+                label = fp["version"] or "版本未知"
+                map_part = (f"涉及 {stats['maps']} 张地图"
+                            if stats["maps"] else "地图未知")
+                if stats["new"]:
+                    self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
+                             f"{fp['frame_count']} 帧）：累计第 "
+                             f"{stats['samples']} 次，{map_part}")
+                else:
+                    self.log(f"[+] 栈指纹 {fp['signature']}（{label}，"
+                             f"{fp['frame_count']} 帧）：本日志已计入，累计 "
+                             f"{stats['samples']} 次，{map_part}")
+
+        # 记录到历史库
+        if self.history:
+            file_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            self.history.mark_diagnosed(
+                target_log['name'], file_hash, target_log['mtime'],
+                analysis_summary)
+
+    def analyze_selected_log(self, log_path):
+        """诊断用户指定的单份日志，返回给界面显示的结果行。"""
+        if not log_path or not os.path.isfile(log_path):
+            return "[-] 未找到所选日志文件。"
+        name = os.path.basename(log_path)
+        try:
+            mtime = os.path.getmtime(log_path)
+        except OSError:
+            mtime = time.time()
+        status = self.history.get_log_status(name) if self.history else None
+        target_log = {
+            "name": name,
+            "path": log_path,
+            "mtime": mtime,
+            "diagnosed": status["diagnosed"] if status else False,
+            "reported": status["reported"] if status else False,
+        }
+        self.log(f"\n[*] 正在分析所选日志: {name}")
+        try:
+            self._diagnose_log_entry(target_log)
+        except Exception as e:
+            self.log(f"[-] 分析失败: {e}")
+            return f"[-] 诊断失败: {e}"
+        return f"[+] 已诊断: {name}"
 
     def generate_ai_slicing_report(self, map_file, mpq_editor_path, base_dir):
         """

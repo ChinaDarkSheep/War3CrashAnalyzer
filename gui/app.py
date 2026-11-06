@@ -14,6 +14,7 @@ from core.reporter import Reporter
 from core.fixer import Fixer
 from core.watcher import CrashLogWatcher
 from gui.tabs.static_tab import StaticTab
+from gui.tabs.author_tab import AuthorTab
 from gui.tabs.local_tab import LocalTab
 from gui.tabs.leak_fix_tab import LeakFixTab
 from gui.tabs.adv_tab import AdvTab
@@ -71,9 +72,6 @@ class War3SuperAnalyzerGUI:
 
         if self.first_run or not self.war3_path.get():
             self.root.after(500, self.show_welcome_wizard)
-        else:
-            # 启动时执行一次静默批量诊断
-            self.root.after(1000, self.startup_audit)
 
         self.stop_reporting = threading.Event()
         threading.Thread(target=self.reporter.periodic_report_worker, 
@@ -144,13 +142,6 @@ class War3SuperAnalyzerGUI:
         except Exception:
             pass
 
-    def startup_audit(self):
-        if self.war3_path.get():
-            self.log("[*] 正在执行启动项扫描...")
-            threading.Thread(target=self.static_tab.auditor.analyze_last_crash, 
-                             args=(self.war3_path.get(),), 
-                             daemon=True).start()
-
     def setup_ui(self):
         # Header (Simplified for example)
         header = tk.Frame(self.root, bg="#2c3e50", height=60)
@@ -162,7 +153,10 @@ class War3SuperAnalyzerGUI:
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         self.static_tab = StaticTab(self.notebook, self)
-        self.notebook.add(self.static_tab, text=" 静态审计与诊断 ")
+        self.notebook.add(self.static_tab, text=" 崩溃诊断 ")
+
+        self.author_tab = AuthorTab(self.notebook, self)
+        self.notebook.add(self.author_tab, text=" 地图作者工具 ")
 
         self.local_tab = LocalTab(self.notebook, self)
         self.notebook.add(self.local_tab, text=" 本地调试 (实测模式) ")
@@ -186,15 +180,17 @@ class War3SuperAnalyzerGUI:
     def report_crash_to_server(self):
         self.reporter.report_crash_to_server(self.war3_path.get(), self.map_path.get(), is_auto=False)
 
-    def open_upload_dialog(self):
+    def open_upload_dialog(self, preferred_log=None):
         from gui.upload_dialog import UploadLogsDialog
         dialog = getattr(self, "upload_dialog", None)
         if dialog is not None and dialog.winfo_exists():
+            if preferred_log:
+                dialog.set_crash_log(preferred_log)
             dialog.deiconify()
             dialog.lift()
             dialog.focus_force()
             return dialog
-        self.upload_dialog = UploadLogsDialog(self.root, self)
+        self.upload_dialog = UploadLogsDialog(self.root, self, preferred_log)
         return self.upload_dialog
 
     def open_upload_status_dialog(self):
