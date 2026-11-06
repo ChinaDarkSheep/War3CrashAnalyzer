@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": 3,
-    "updated": "2026-11-05",
+    "updated": "2026-11-06",
     "note": "条目均为历史社区流传结论，除 verified=true 外仅作线索，不作为确定性诊断。address_space=RVA(模块内偏移)。"
   },
   "build_prefixes": {
@@ -348,34 +348,12 @@
           "suggestion": "属引擎内部容器损坏，暂无法对应到具体地图脚本。若同一张地图反复出现，请把日志与同名 .dmp 一并交给地图作者排查；避免在回调或遍历过程中销毁对象。"
         },
         "0x00084510": {
-          "desc": "魔兽内置 UI 刷新崩溃。常见于多面板 (Multiboard) 更新过快。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
-        },
-        "0x001E35E0": {
-          "desc": "GroupEnumUnitsInRange 崩溃。空句柄引用。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false,
-          "apis": [
-            "GroupEnumUnitsInRange",
-            "GroupEnumUnitsInRangeCounted",
-            "GroupEnumUnitsInRangeOfLoc",
-            "GroupEnumUnitsInRangeOfLocCounted",
-            "GroupEnumUnitsInRect",
-            "GroupEnumUnitsInRectCounted",
-            "GroupEnumUnitsOfPlayer",
-            "GroupEnumUnitsOfType",
-            "GroupEnumUnitsOfTypeCounted",
-            "GroupEnumUnitsSelected"
-          ]
-        },
-        "0x001FE500": {
-          "desc": "RemoveLocation 崩溃。空句柄引用。",
-          "source": "legacy",
-          "confidence": 0.4,
-          "verified": false
+          "desc": "UI 复选框哈希节点（CHECKBOXHASHNODE，含 RCString / RCStaticString 两个子对象）的删除析构函数收尾：0x84490 调用析构与 operator delete 后执行 pop esi（0x84510）。该指令只恢复寄存器，正常执行不会访问异常内存；命中更可能是更早的栈指针/调用链已被破坏后继续执行到的位置，需结合完整调用栈定位真正的崩溃点。旧文案“多面板更新过快”无任何证据，1.27a 真实样本中也未出现该地址。",
+          "source": "static/2026-11-06",
+          "confidence": 0.5,
+          "verified": true,
+          "attribution": "暂无法确定",
+          "suggestion": "该地址是删除析构函数的收尾指令，不是可独立触发崩溃的根因。请优先检查崩溃前是否有数组/容器越界写、递归过深或异常跨越析构调用；若同一地图反复出现，请把日志与同名 .dmp 一并交给地图作者排查。"
         }
       },
       "1.28.5": {

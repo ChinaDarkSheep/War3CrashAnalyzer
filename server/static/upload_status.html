@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📋 上传记录 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 28px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 18px; }
+        .code { font-size: 2.2em; font-weight: 700; letter-spacing: 6px; color: var(--primary); font-family: Consolas, monospace; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-weight: bold; }
+        .badge-ok { background: #dcfce7; color: #1e8449; border: 1px solid #bbf7d0; }
+        .badge-gone { background: #fdebd0; color: #a04000; border: 1px solid #fad7a0; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
+        .meta-item .label { color: #888; font-size: 0.78em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; }
+        .analysis { margin-top: 14px; background: #f8f9fa; border-radius: 8px; padding: 12px 14px; font-size: 0.92em; line-height: 1.6; }
+        .empty { text-align: center; color: #999; padding: 26px; }
+        .error { background: #fee2e2; color: #922b21; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; }
+        .muted { color: #888; font-size: 0.88em; line-height: 1.7; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📋 上传记录</h1>
+            <p>凭 6 位上传码查看本次采集的派生信息；原始日志不会在这里公开</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/upload">📤 上传日志</a>
+        </header>
+
+        <div class="card" id="loading">
+            <div class="empty">正在查询上传记录…</div>
+        </div>
+
+        <div class="card hidden" id="error-card">
+            <div class="error" id="error-text">上传码不存在或已过期</div>
+        </div>
+
+        <div class="card hidden" id="detail">
+            <h2>上传码 <span class="code" id="code"></span></h2>
+            <p id="raw-state"></p>
+            <div class="meta-grid" id="meta"></div>
+            <div class="analysis hidden" id="analysis"></div>
+            <p class="muted">
+                原始日志与 dump 只保存在服务器私有目录，用于复核；到期后自动删除，仅保留上面的派生信息。
+                若需要补充材料，请用同一个上传码联系维护者。
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const code = (location.pathname.split('/').pop() || '').trim();
+
+        function formatBytes(bytes) {
+            const value = Number(bytes || 0);
+            if (value >= 1024 * 1024) return (value / 1024 / 1024).toFixed(2) + ' MB';
+            if (value >= 1024) return (value / 1024).toFixed(0) + ' KB';
+            return value + ' B';
+        }
+
+        function addField(label, value) {
+            const item = document.createElement('div');
+            item.className = 'meta-item';
+            const labelEl = document.createElement('div');
+            labelEl.className = 'label';
+            labelEl.textContent = label;
+            const valueEl = document.createElement('div');
+            valueEl.className = 'value';
+            valueEl.textContent = value;
+            item.appendChild(labelEl);
+            item.appendChild(valueEl);
+            $('meta').appendChild(item);
+        }
+
+        function showError(message) {
+            $('loading').classList.add('hidden');
+            $('error-card').classList.remove('hidden');
+            $('error-text').textContent = message;
+        }
+
+        async function load() {
+            if (!/^\d{6}$/.test(code)) {
+                showError('上传码格式不正确，应为 6 位数字');
+                return;
+            }
+            try {
+                const response = await fetch('/api/upload/' + code, { cache: 'no-store' });
+                const data = await response.json();
+                if (!response.ok) {
+                    showError(data.message || '上传码不存在或已过期');
+                    return;
+                }
+                $('loading').classList.add('hidden');
+                $('detail').classList.remove('hidden');
+                $('code').textContent = data.code;
+                $('raw-state').innerHTML = data.raw_available
+                    ? '<span class="badge badge-ok">原始文件保留中</span>'
+                    : '<span class="badge badge-gone">原始文件已到期删除</span>';
+
+                addField('上传时间', data.created_at || '-');
+                addField('原始文件保留至', data.expires_at || '-');
+                addField('保留天数', (data.retention_days || '-') + ' 天');
+                addField('文件数量', String(data.file_count || 0));
+                addField('总大小', formatBytes(data.total_bytes));
+                addField('游戏版本', data.game_version || '未识别');
+                addField('地图', data.map_name || '未识别');
+                addField('地图 MD5', data.map_hash || '未识别');
+                addField('崩溃位置', data.relative_offset || '未识别');
+                addField('归属模块', data.module || '未识别');
+                addField('KK 会话', data.kk_session || '未附平台日志');
+                const summary = data.summary || {};
+                const crash = summary.crash;
+                addField('崩溃记录数', crash ? String(crash.records) + ' 次' : '未附崩溃日志');
+                addField('平台日志', data.has_kk ? '已附' : '未附');
+
+                if (data.analysis) {
+                    $('analysis').classList.remove('hidden');
+                    $('analysis').textContent = '初步诊断：' + data.analysis;
+                }
+            } catch (err) {
+                showError('网络错误，无法查询上传记录');
+            }
+        }
+
+        load();
+    </script>
+</body>
+</html>

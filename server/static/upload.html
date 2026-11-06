@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📤 上传崩溃日志 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 12px; }
+        .hint { color: #666; font-size: 0.9em; line-height: 1.7; margin: 0 0 15px; }
+        .hint code { background: #f0f3f5; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+        .dropzone {
+            border: 2px dashed #c8d6e5; border-radius: 10px; padding: 26px 20px;
+            text-align: center; background: #fbfdff; cursor: pointer; transition: all .15s;
+        }
+        .dropzone:hover, .dropzone.active { border-color: var(--primary); background: #f0f8ff; }
+        .dropzone .title { font-weight: 600; margin-bottom: 6px; }
+        .dropzone .sub { color: #888; font-size: 0.85em; }
+        .zone-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+        .zone-actions label, .zone-actions button {
+            padding: 9px 16px; border-radius: 6px; border: 1px solid #dfe6e9;
+            background: #fff; cursor: pointer; font-size: 0.9em; color: #333;
+        }
+        .zone-actions label:hover, .zone-actions button:hover { border-color: var(--primary); color: var(--primary); }
+        .zone-actions input[type="file"] { display: none; }
+        .zone-actions .clear { color: #999; }
+        .file-summary { margin-top: 14px; font-size: 0.9em; color: #555; }
+        .file-summary strong { color: var(--dark); }
+        .file-list { margin: 8px 0 0; padding-left: 18px; color: #777; font-size: 0.84em; max-height: 110px; overflow: auto; }
+        .warn { color: #b9770e; font-size: 0.85em; margin-top: 8px; }
+        .danger { color: var(--danger); }
+        .consent { display: flex; gap: 10px; align-items: flex-start; font-size: 0.9em; line-height: 1.6; color: #555; margin: 18px 0; }
+        .submit-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+        .primary-btn {
+            padding: 12px 30px; border: none; border-radius: 8px; cursor: pointer;
+            background: var(--primary); color: #fff; font-size: 1em;
+        }
+        .primary-btn:disabled { background: #b2bec3; cursor: not-allowed; }
+        .progress { flex: 1; min-width: 180px; height: 10px; background: #eef2f5; border-radius: 6px; overflow: hidden; display: none; }
+        .progress > div { height: 100%; width: 0; background: var(--primary); transition: width .2s; }
+        .alert { display: none; padding: 12px 15px; border-radius: 8px; margin-top: 16px; font-size: 0.92em; }
+        .alert.error { display: block; background: #fee2e2; color: #922b21; border: 1px solid #fecaca; }
+        .result { display: none; }
+        .result.show { display: block; }
+        .code-box {
+            text-align: center; background: #f0f8ff; border: 1px solid #bae6fd;
+            border-radius: 12px; padding: 22px; margin-bottom: 18px;
+        }
+        .code-box .label { color: #666; font-size: 0.9em; }
+        .code { font-size: 2.6em; font-weight: 700; letter-spacing: 8px; color: var(--primary); margin: 8px 0; font-family: Consolas, monospace; }
+        .code-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .code-actions button, .code-actions a {
+            padding: 9px 18px; border-radius: 6px; border: 1px solid #bae6fd;
+            background: #fff; color: var(--primary); text-decoration: none; cursor: pointer; font-size: 0.9em;
+        }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
+        .meta-item .label { color: #888; font-size: 0.78em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; }
+        .analysis { margin-top: 14px; background: #f8f9fa; border-radius: 8px; padding: 12px 14px; font-size: 0.92em; line-height: 1.6; }
+        .muted { color: #888; font-size: 0.85em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📤 上传崩溃日志</h1>
+            <p>选择崩溃记录文件夹，必要时再附上 KK 平台日志；本地只上传日志文本、dump 与 bin，不上传地图文件</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+        </header>
+
+        <div class="card" id="upload-card">
+            <h2>1️⃣ 崩溃记录（Errors）</h2>
+            <p class="hint">
+                崩溃后先不要重复启动游戏。打开魔兽根目录下的 <code>Errors</code>，把最近一次崩溃的文件夹整体拖进来
+                （通常包含 <code>Crash.txt</code>、<code>.dmp</code> 等）。一次崩溃一个文件夹；如果整个 Errors 里的文件
+                不超过 40 个，也可以直接拖入，系统会按子文件夹识别多次崩溃；超过 40 个时请只选最近一次崩溃文件夹。
+                没有 Errors 文件的平台局，可只上传下面的平台日志。
+            </p>
+            <div class="dropzone" id="crash-drop">
+                <div class="title">把崩溃文件夹拖到这里</div>
+                <div class="sub">支持 txt / log / dmp / mdmp / bin / zip</div>
+            </div>
+            <div class="zone-actions">
+                <label>选择崩溃文件夹
+                    <input type="file" id="crash-dir" webkitdirectory directory multiple>
+                </label>
+                <label>选择文件
+                    <input type="file" id="crash-files" multiple>
+                </label>
+                <button type="button" class="clear" data-clear="crash">清除</button>
+            </div>
+            <div class="file-summary" id="crash-info">尚未选择文件</div>
+            <div class="warn" id="crash-warn" hidden></div>
+        </div>
+
+        <div class="card">
+            <h2>2️⃣ KK 平台日志（可选，但强烈建议）</h2>
+            <p class="hint">
+                KK 局内崩溃经常不生成 Errors 文件。KK 通常装在 <code>C:\Program Files (x86)\kkduizhan</code>
+                （这只是默认示例，实际以你的安装位置为准）：在 KK 快捷方式上右键 → 打开文件所在位置，进入其中的
+                <code>log</code> 文件夹，选择最近一次会话文件夹（例如 <code>2026_11_06 00_05_23.163</code>）整体上传。
+                只有最近的会话会被平台保留，崩溃后请尽快上传。网页只读取 <code>platform.log</code>、
+                <code>downloader.log</code>、<code>war3\&lt;进程号&gt;\war3dll.log</code>，其余文件会被忽略。
+            </p>
+            <div class="dropzone" id="kk-drop">
+                <div class="title">把 KK 会话文件夹拖到这里</div>
+                <div class="sub">选择 KK 安装目录下 log 里的最近会话文件夹</div>
+            </div>
+            <div class="zone-actions">
+                <label>选择平台日志文件夹
+                    <input type="file" id="kk-dir" webkitdirectory directory multiple>
+                </label>
+                <label>选择文件
+                    <input type="file" id="kk-files" multiple>
+                </label>
+                <button type="button" class="clear" data-clear="kk">清除</button>
+            </div>
+            <div class="file-summary" id="kk-info">尚未选择文件</div>
+            <div class="warn" id="kk-warn" hidden></div>
+        </div>
+
+        <div class="card">
+            <h2>3️⃣ 上传</h2>
+            <label class="consent">
+                <input type="checkbox" id="consent">
+                <span>我了解：日志可能包含本机路径与系统信息，上传后仅供维护者排查；原始文件最多保留 15 天，到期自动删除；
+                    公开页面只展示脱敏后的诊断结论，不会公开原始日志、Windows 用户名或计算机名。</span>
+            </label>
+            <div class="submit-row">
+                <button type="button" class="primary-btn" id="submit" disabled>上传并获取上传码</button>
+                <div class="progress" id="progress"><div></div></div>
+                <span class="muted" id="size-info"></span>
+            </div>
+            <div class="alert" id="error-box"></div>
+        </div>
+
+        <div class="card result" id="result">
+            <h2>✅ 上传成功</h2>
+            <div class="code-box">
+                <div class="label">上传码（可发到群里或交给维护者）</div>
+                <div class="code" id="result-code">------</div>
+                <div class="code-actions">
+                    <button type="button" id="copy-code">复制上传码</button>
+                    <a id="status-link" href="#" target="_blank" rel="noopener">查看上传记录</a>
+                    <a href="/upload">再传一份</a>
+                </div>
+            </div>
+            <div class="meta-grid" id="result-meta"></div>
+            <div class="analysis" id="result-analysis" hidden></div>
+            <p class="muted" id="result-note"></p>
+        </div>
+    </div>
+
+    <script>
+        const ALLOWED = new Set(['txt', 'log', 'dmp', 'mdmp', 'bin', 'zip']);
+        const MAX_BYTES = 50 * 1024 * 1024;
+        const MAX_FILES = 40;
+        const state = {
+            crash: { files: [], ignored: 0 },
+            kk: { files: [], ignored: 0 }
+        };
+
+        const $ = (id) => document.getElementById(id);
+        const formatBytes = (bytes) => {
+            if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+            return bytes + ' B';
+        };
+        const extOf = (name) => {
+            const dot = name.lastIndexOf('.');
+            return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+        };
+        const baseName = (path) => path.split('/').pop();
+
+        function walkEntry(entry, prefix, out) {
+            return new Promise((resolve) => {
+                if (entry.isFile) {
+                    entry.file((file) => {
+                        out.push({ file: file, path: prefix + file.name });
+                        resolve();
+                    }, () => resolve());
+                } else if (entry.isDirectory) {
+                    const reader = entry.createReader();
+                    const readBatch = () => {
+                        reader.readEntries(async (batch) => {
+                            if (!batch.length) {
+                                resolve();
+                                return;
+                            }
+                            for (const child of batch) {
+                                await walkEntry(child, prefix + entry.name + '/', out);
+                            }
+                            readBatch();
+                        }, () => resolve());
+                    };
+                    readBatch();
+                } else {
+                    resolve();
+                }
+            });
+        }
+
+        function addEntries(zone, entries) {
+            const seen = new Set(state[zone].files.map((item) => item.path + '|' + item.file.size));
+            for (const entry of entries) {
+                const name = entry.file.name;
+                if (!ALLOWED.has(extOf(name))) {
+                    state[zone].ignored += 1;
+                    continue;
+                }
+                const key = entry.path + '|' + entry.file.size;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                state[zone].files.push({ file: entry.file, path: entry.path });
+            }
+            state[zone].files.sort((a, b) => a.path.localeCompare(b.path));
+            render();
+        }
+
+        function clearZone(zone) {
+            state[zone].files = [];
+            state[zone].ignored = 0;
+            render();
+        }
+
+        function totalBytes() {
+            return state.crash.files.concat(state.kk.files)
+                .reduce((sum, item) => sum + item.file.size, 0);
+        }
+
+        function render() {
+            ['crash', 'kk'].forEach((zone) => {
+                const info = $(zone + '-info');
+                const warn = $(zone + '-warn');
+                const items = state[zone].files;
+                if (!items.length) {
+                    info.textContent = '尚未选择文件';
+                    warn.hidden = true;
+                } else {
+                    const size = items.reduce((sum, item) => sum + item.file.size, 0);
+                    info.innerHTML = '<strong>' + items.length + '</strong> 个文件，共 <strong>'
+                        + formatBytes(size) + '</strong>';
+                    const list = document.createElement('ul');
+                    list.className = 'file-list';
+                    items.slice(0, 8).forEach((item) => {
+                        const li = document.createElement('li');
+                        li.textContent = baseName(item.path) + '（' + formatBytes(item.file.size) + '）';
+                        list.appendChild(li);
+                    });
+                    if (items.length > 8) {
+                        const li = document.createElement('li');
+                        li.textContent = '…等 ' + items.length + ' 个文件';
+                        list.appendChild(li);
+                    }
+                    info.appendChild(list);
+
+                    const warnings = [];
+                    if (items.length > MAX_FILES) warnings.push('每类最多 ' + MAX_FILES + ' 个文件');
+                    if (state[zone].ignored) {
+                        warnings.push('已忽略 ' + state[zone].ignored + ' 个不支持的文件');
+                    }
+                    warn.textContent = warnings.join('；');
+                    warn.hidden = warnings.length === 0;
+                }
+            });
+
+            const size = totalBytes();
+            const count = state.crash.files.length + state.kk.files.length;
+            $('size-info').textContent = count ? ('合计 ' + count + ' 个文件 / ' + formatBytes(size)) : '';
+            $('size-info').classList.toggle('danger', size > MAX_BYTES);
+            const tooMany = state.crash.files.length > MAX_FILES || state.kk.files.length > MAX_FILES;
+            $('submit').disabled = !(count > 0 && size <= MAX_BYTES && !tooMany && $('consent').checked);
+        }
+
+        function bindZone(zone) {
+            const drop = $(zone + '-drop');
+            drop.addEventListener('click', () => $(zone + '-dir').click());
+            drop.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                drop.classList.add('active');
+            });
+            drop.addEventListener('dragleave', () => drop.classList.remove('active'));
+            drop.addEventListener('drop', async (event) => {
+                event.preventDefault();
+                drop.classList.remove('active');
+                const roots = [];
+                if (event.dataTransfer.items) {
+                    for (const item of event.dataTransfer.items) {
+                        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+                        if (entry) roots.push(entry);
+                    }
+                }
+                const entries = [];
+                for (const root of roots) {
+                    await walkEntry(root, '', entries);
+                }
+                addEntries(zone, entries);
+            });
+
+            const dirInput = $(zone + '-dir');
+            dirInput.addEventListener('change', () => {
+                const entries = Array.from(dirInput.files).map((file) => ({
+                    file: file,
+                    path: file.webkitRelativePath || file.name
+                }));
+                addEntries(zone, entries);
+                dirInput.value = '';
+            });
+
+            const fileInput = $(zone + '-files');
+            fileInput.addEventListener('change', () => {
+                const entries = Array.from(fileInput.files).map((file) => ({
+                    file: file,
+                    path: file.name
+                }));
+                addEntries(zone, entries);
+                fileInput.value = '';
+            });
+        }
+
+        function showError(message) {
+            const box = $('error-box');
+            box.textContent = message;
+            box.className = 'alert error';
+        }
+
+        function clearError() {
+            $('error-box').className = 'alert';
+            $('error-box').textContent = '';
+        }
+
+        function renderResult(data) {
+            $('result').classList.add('show');
+            $('result-code').textContent = data.code;
+            $('status-link').href = '/u/' + data.code;
+            $('copy-code').onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(data.code);
+                    $('copy-code').textContent = '已复制';
+                } catch (err) {
+                    $('copy-code').textContent = data.code;
+                }
+            };
+
+            const fields = [
+                ['游戏版本', data.game_version || '未识别'],
+                ['地图', data.map_name || '未识别'],
+                ['地图 MD5', data.map_hash || '未识别'],
+                ['崩溃位置', data.relative_offset || '未识别'],
+                ['归属模块', data.module || '未识别'],
+                ['文件数', String(data.file_count || 0)],
+                ['原始文件保留至', data.expires_at || '-']
+            ];
+            const grid = $('result-meta');
+            grid.innerHTML = '';
+            fields.forEach(([label, value]) => {
+                const item = document.createElement('div');
+                item.className = 'meta-item';
+                const labelEl = document.createElement('div');
+                labelEl.className = 'label';
+                labelEl.textContent = label;
+                const valueEl = document.createElement('div');
+                valueEl.className = 'value';
+                valueEl.textContent = value;
+                item.appendChild(labelEl);
+                item.appendChild(valueEl);
+                grid.appendChild(item);
+            });
+
+            if (data.analysis) {
+                $('result-analysis').hidden = false;
+                $('result-analysis').textContent = '初步诊断：' + data.analysis;
+            } else {
+                $('result-analysis').hidden = true;
+            }
+
+            const crashCount = data.summary && data.summary.crash ? data.summary.crash.records : 0;
+            const notes = [];
+            if (data.duplicate) notes.push('相同日志此前已上传过，直接返回原上传码。');
+            if (crashCount > 1) notes.push('本次共识别到 ' + crashCount + ' 次崩溃记录。');
+            if (!data.has_kk) notes.push('未附平台日志；如果这是 KK 局内中断，建议补传最近会话日志。');
+            $('result-note').textContent = notes.join(' ');
+            $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function submit() {
+            clearError();
+            $('submit').disabled = true;
+            $('result').classList.remove('show');
+            const form = new FormData();
+            ['crash', 'kk'].forEach((zone) => {
+                state[zone].files.forEach((item) => {
+                    form.append(zone, item.file, item.file.name);
+                });
+                form.append(zone + '_paths', JSON.stringify(state[zone].files.map((item) => item.path)));
+            });
+
+            const progress = $('progress');
+            progress.style.display = 'block';
+            progress.firstElementChild.style.width = '0%';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload');
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    progress.firstElementChild.style.width =
+                        Math.round(event.loaded / event.total * 100) + '%';
+                }
+            };
+            xhr.onload = () => {
+                progress.style.display = 'none';
+                let data = null;
+                try {
+                    data = JSON.parse(xhr.responseText);
+                } catch (err) {
+                    data = null;
+                }
+                if (xhr.status >= 200 && xhr.status < 300 && data && data.code) {
+                    renderResult(data);
+                } else {
+                    showError((data && data.message) || ('上传失败（HTTP ' + xhr.status + '）'));
+                }
+                render();
+            };
+            xhr.onerror = () => {
+                progress.style.display = 'none';
+                showError('网络中断，请检查连接后重试');
+                render();
+            };
+            xhr.send(form);
+        }
+
+        bindZone('crash');
+        bindZone('kk');
+        document.querySelectorAll('[data-clear]').forEach((button) => {
+            button.addEventListener('click', () => clearZone(button.dataset.clear));
+        });
+        $('consent').addEventListener('change', render);
+        $('submit').addEventListener('click', submit);
+        render();
+    </script>
+</body>
+</html>
