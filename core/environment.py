@@ -11,8 +11,19 @@ _MODULE_EXT = r"(?:dll|exe|asi|flt|ime|cpl)"
 
 # 目录特征用于消解同名模块的归属歧义：编辑器插件目录下的 kk*.dll / yd_*.dll
 # 不能仅凭文件名算作对战平台。
-_EDITOR_PATH = re.compile(r"(?:雪月|编辑器|editor|ydwe|worldedit|\\plugin\\)", re.I)
-_PLATFORM_PATH = re.compile(r"(?:对战平台|对战|平台|azurewrath|kkplatform)", re.I)
+_EDITOR_PATH = re.compile(r"(?:雪月|编辑器|editor|ydwe|worldedit|latestkkwe|\\plugin\\)", re.I)
+# KK 官方对战平台的游戏注入目录（本机实测：C:\Program Files (x86)\kkduizhan\plugins\Game）。
+# 其中大量模块名（d3d9.dll、luacore.dll 等）在系统或其他软件里也存在，
+# 因此只在命中该目录时才按平台归属，避免同名误判。
+_KK_GAME_DIR = re.compile(r"[\\/]kkduizhan[\\/]plugins[\\/]game(?:[\\/]|$)", re.I)
+_KK_GAME_MODULES = frozenset(name.casefold() for name in (
+    "Ares.dll", "CSPlugin.dll", "GameHelper.dll", "kkapi.dll", "Ra2Plugin.dll",
+    "SCPlugin.dll", "SCPlugin_x64.dll", "SCRPlugin.dll", "SCRPluginV2.dll",
+    "SCRPluginV2_64.dll", "SCRPlugin_64.dll", "SlkLib.dll", "stimpack.dll",
+    "stimpack_64.dll", "sb_init.dll", "sb_init_64.dll", "War3Plugin.dll",
+    "GameProxy.dll", "Phobos.dll", "Win7Patch.dll", "bcryptprimitives.dll",
+    "d3d9.dll", "ddraw.dll", "cnc-ddraw.dll", "ts-ddraw.dll",
+))
 
 # (类别, 模块名规则, 展示名)；KK 平台只匹配明确的平台模块名，
 # 不再用 ^kk.*\.dll$ 把 kkapi.dll 这类编辑器插件一并吞掉。
@@ -73,21 +84,29 @@ def _loaded_module_records(text):
         return []
 
     records = []
+    started = False
     for line in text[m.end():].splitlines():
         line = line.strip()
         if not line:
             continue
-        if _STOP.match(line) or _SEPARATOR.match(line):
+        if _STOP.match(line):
             break
+        if _SEPARATOR.match(line):
+            # 段首的分隔线是表头装饰，不能据此结束；段尾的分隔线才表示结束。
+            if started:
+                break
+            continue
         addr_line = _ADDR_LINE.match(line)
         if addr_line:
             path = addr_line.group(1)
             name = os.path.basename(path)
             if name:
                 records.append({"name": name, "path": path})
+                started = True
         else:
             for name in _TOKEN.findall(line):
                 records.append({"name": name, "path": ""})
+                started = True
         if len(records) >= 400:
             break
     return records
@@ -97,16 +116,16 @@ def _classify(module, path=None):
     """返回 (类别, 展示名)；未命中返回 None。
 
     path 存在时用于消解同名歧义：编辑器目录下的 kkapi.dll 归编辑器插件；
-    只有明确位于平台目录时才改判为平台。
+    只有位于 KK 平台 plugins\\Game 注入目录的已知模块才归平台。
     """
     name = os.path.basename((module or "").strip())
     if not name:
         return None
 
     editor_path = bool(path and _EDITOR_PATH.search(path))
-    platform_path = bool(path and _PLATFORM_PATH.search(path))
+    kk_game_path = bool(path and _KK_GAME_DIR.search(path))
 
-    if name.casefold() == "kkapi.dll" and platform_path and not editor_path:
+    if kk_game_path and not editor_path and name.casefold() in _KK_GAME_MODULES:
         return "platform", "KK对战平台"
 
     for category, pattern, label in _RULES:
