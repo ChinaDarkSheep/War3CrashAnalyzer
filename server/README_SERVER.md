@@ -9,6 +9,7 @@
 4. **聚合统计**：按「地图身份 + 栈指纹」聚合相同崩溃，记录发生次数与作者标注位。
 5. **原始日志上传**：网页收集崩溃记录与 KK 平台会话日志，返回 6 位上传码；原始文件私有保存 7~15 天后自动删除。
 6. **服务端入库与管理端**：网页上传的日志在服务端重新诊断并写入报告与聚合；维护者可用令牌保护的 `/admin/uploads` 查看、预览、下载与删除原始文件，操作全程审计。
+7. **案例复核与知识库合并**：`/admin/cases` 汇总作者标注形成的案例缓存，支持筛选、导出片段、试运行与批量合并进共享 `knowledge.json`；写入前自动备份，运行时立即生效。
 
 ## 上报字段（P2.1）
 `/api/report` 在原有 `map / os / log_content / crash_address / analysis_result` 基础上新增：
@@ -80,7 +81,7 @@ python server/app.py
 
 - `POST /api/aggregate/<signature>/annotation`：JSON 体 `{"annotation": "根因", "source": "作者确认", "confidence": 0.9, "annotator": "可选"}`，`confidence` 为 0~1。
 - `GET /api/knowledge/cases?map_hash=<md5>&map=<地图名>&fingerprint=<指纹>&limit=50`：查看案例缓存。
-- 案例缓存只作为候选，不自动写入全局 `knowledge.json`；由维护者复核后合并，避免单张地图的个案污染全局偏移结论。
+- 案例缓存只作为候选，不自动写入全局 `knowledge.json`；由维护者在 `/admin/cases` 复核后手动合并（见 P2.9），避免单张地图的个案污染全局偏移结论。
 - 全量重建聚合表时会保留标注内容、来源、置信度、标注人与时间。
 
 ## 原始日志上传（P2.6）
@@ -115,8 +116,10 @@ python server/app.py
 | `WAR3_RAW_RETENTION_DAYS` | `14` | 原始文件保留天数，自动收敛到 7~15 |
 | `WAR3_UPLOAD_RATE` | `10` | 每 IP 每小时上传次数上限 |
 | `WAR3_UPLOAD_SALT` | 启动时随机 | IP 哈希盐；多实例部署时需固定为同一值 |
-| `WAR3_ADMIN_TOKEN` | 未设置 | 管理端与管理接口令牌；未设置时管理端禁用（503） |
+| `WAR3_ADMIN_TOKEN` | 未设置 | 管理端与管理接口令牌；未设置时管理端禁用（503），同时保护案例合并 |
 | `WAR3_DB_PATH` | `server/crash_data.db` | SQLite 路径，便于测试或迁移 |
+| `WAR3_KB_PATH` | 仓库根目录 `knowledge.json` | 共享知识库路径；客户端与服务端需指向同一份文件 |
+| `WAR3_KB_BACKUP_DIR` | `server/knowledge_backups` | 合并前备份目录，自动保留最近 50 份 |
 
 ### 部署注意
 - 反向代理（Nginx）需把 `client_max_body_size` 调到 **55m** 以上，否则 50 MB 上传会被前置代理拦截。
@@ -164,6 +167,31 @@ $env:WAR3_ADMIN_TOKEN='请换成足够长的随机字符串'
 - 删除只影响原始文件；`crash_reports` 与聚合统计是脱敏派生数据，会继续保留，避免历史统计被单次删除篡改。
 - 管理端接口不复用公开的上传码查询逻辑，必须通过令牌校验。
 
+## 案例复核与知识库合并（P2.9）
+作者标注写入的 `knowledge_cases` 只是候选，本功能让维护者在网页上完成「筛选 → 核对 → 合并」的闭环，把确认过的案例落到共享 `knowledge.json`，客户端与服务端同时受益。
+
+### 页面与接口
+访问 `/admin/cases`（入口在 `/admin/uploads` 顶部导航），与上传管理端共用 `WAR3_ADMIN_TOKEN`，请求头 `X-Admin-Token`；未配置令牌返回 503，令牌错误 403。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/admin/cases` | 列表。支持 `map_hash`、`map`、`fingerprint`、`module`、`version`、`source`、`merged`（0/1）、`q`（根因/地图/指纹/标注人）、`limit`（1~200）、`offset`；每条附 `merge` 预览（目标地址、是否冲突、已有条目、不可合并原因） |
+| `GET /api/admin/cases/<signature>/export` | 导出单条案例为可直接并入 `knowledge.json` 的片段，`Content-Disposition: attachment` |
+| `POST /api/admin/cases/merge` | 批量合并。JSON 体 `{"signatures": ["..."], "overwrite": false, "dry_run": false}`；返回逐条状态（`merged` / `preview` / `conflict` / `invalid` / `not_found` / `error`）与计数 |
+
+### 合并口径
+- **目标地址**：`modules[模块][归一化版本][0x + 8 位大写偏移]`；版本会归一化（如 `1.27.0.52240 → 1.27a`），偏移会补零与转大写。缺模块、缺版本、偏移无效或根因为空时不会写入，列表直接给出原因。
+- **冲突**：知识库已存在同地址条目时默认跳过（状态 `conflict`）；勾选「允许覆盖」后写入，更新 `desc / source / confidence / verified`，保留原条目的 `attribution / suggestion / apis` 等附加线索。
+- **来源与验证**：条目 `source` 记为 `case/<12 位签名>`；来源为「作者确认」或「维护者确认」时 `verified=true`，已有 `verified=true` 的条目覆盖后也不会降级。
+- **导出**：导出的片段与合并使用同一套归一化与条目构造逻辑，便于离线审阅或手工并入。
+- **案例标记**：合并成功的案例写入 `merged_at / merged_key`，列表中显示「已合并」；重复合并同一地址时仍按冲突规则处理。
+
+### 安全与生效
+- 每次实际写入前把当前 `knowledge.json` 复制到 `server/knowledge_backups/`（保留最近 50 份），再通过临时文件 + `os.replace` 原子替换，避免写坏原文件。
+- 进程内用锁串行化并发合并；`dry_run` 只计算不落盘。
+- 写入成功后立即热更新 `settings.KB`、`settings.BUILD_PREFIXES` 与 `core.knowledge` 缓存，服务端诊断无需重启即可命中新条目；客户端需更新随包分发的 `knowledge.json` 后生效。
+- 导出与合并均写入 `admin_audit`（`export_case` / `merge_case`，含签名、目标地址与 IP 哈希），便于回溯是谁合并了什么。
+
 ## 快速启动
 1. 确保已安装 Python 环境。
 2. 安装依赖：
@@ -185,14 +213,17 @@ $env:WAR3_ADMIN_TOKEN='请换成足够长的随机字符串'
 - `legacy_report.py`: 旧版 `/api/report` 的日志解析与知识库查表。
 - `upload_store.py`: 上传落盘、zip 安全校验、崩溃区/KK 区解析、限流与到期清理。
 - `diagnosis.py`: 服务端诊断（复用 `core/`）与上传日志入库。
-- `blueprints/`: 路由蓝图（`pages` / `uploads` / `admin` / `reports` / `aggregates`）。
+- `knowledge_merge.py`: 案例 → 知识库的预览、冲突判定、导出、备份、原子写入与缓存热更新。
+- `blueprints/`: 路由蓝图（`pages` / `uploads` / `admin` / `reports` / `aggregates` / `cases`）。
 - `crash_data.db`: SQLite 数据库（自动生成，含聚合、案例缓存与上传账单）。
+- `knowledge_backups/`: 合并知识库前的自动备份（自动生成，保留 50 份，已被 `.gitignore` 忽略）。
 - `uploads/`: 原始日志私有目录（自动生成，默认保留 14 天，已被 `.gitignore` 忽略）。
 - `static/index.html`: 总览仪表盘。
 - `static/author.html`: 作者查询与标注页。
 - `static/upload.html`: 崩溃日志与 KK 会话日志上传页。
 - `static/upload_status.html`: 上传码查询页。
-- `static/admin_uploads.html`: 维护者管理端（令牌保护）。
+- `static/admin_uploads.html`: 维护者上传管理端（令牌保护）。
+- `static/admin_cases.html`: 案例复核与知识库合并页（令牌保护）。
 - `static/md5.js`: 浏览器本地地图 MD5 计算。
 
 ## 客户端集成

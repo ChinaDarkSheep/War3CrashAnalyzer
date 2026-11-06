@@ -61,6 +61,9 @@ ADMIN_PREVIEW_BYTES = 512 * 1024
 
 # --- 共享知识库：读取仓库根目录 knowledge.json，与客户端同源 ---
 def _locate_knowledge():
+    override = (os.environ.get('WAR3_KB_PATH') or '').strip()
+    if override:
+        return os.path.abspath(override)
     candidates = [os.path.join(BASE_DIR, '..', 'knowledge.json'),
                   os.path.join(BASE_DIR, 'knowledge.json')]
     for path in candidates:
@@ -69,9 +72,17 @@ def _locate_knowledge():
     return candidates[0]
 
 
+KNOWLEDGE_PATH = _locate_knowledge()
+# 合并前备份：默认放在 server/knowledge_backups/（已加入 .gitignore）
+KNOWLEDGE_BACKUP_DIR = os.path.abspath(
+    (os.environ.get('WAR3_KB_BACKUP_DIR') or '').strip()
+    or os.path.join(BASE_DIR, 'knowledge_backups'))
+KNOWLEDGE_BACKUP_KEEP = 50
+
+
 def _load_kb():
     try:
-        with open(_locate_knowledge(), 'r', encoding='utf-8') as handle:
+        with open(KNOWLEDGE_PATH, 'r', encoding='utf-8') as handle:
             return json.load(handle)
     except Exception as exc:
         print(f"[!] 知识库加载失败，将只使用日志中的本地分析结果: {exc}")

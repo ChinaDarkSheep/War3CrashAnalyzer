@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import hashlib
+import re
 
 class HistoryTracker:
     def __init__(self, db_path):
@@ -207,3 +208,131 @@ class HistoryTracker:
             return rows
         except:
             return []
+
+    def summary(self):
+        """历史库概览：诊断日志数、指纹组数与重复崩溃组数。"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            logs = conn.execute("SELECT COUNT(*) FROM processed_logs").fetchone()[0]
+            fingerprints = conn.execute(
+                "SELECT COUNT(*) FROM crash_fingerprints").fetchone()[0]
+            repeated = conn.execute(
+                "SELECT COUNT(*) FROM crash_fingerprints WHERE samples > 1").fetchone()[0]
+            conn.close()
+            return {"logs": logs, "fingerprints": fingerprints,
+                    "repeated": repeated}
+        except Exception:
+            return {"logs": 0, "fingerprints": 0, "repeated": 0}
+
+    def list_fingerprints(self, limit=200, query="", repeated_only=False):
+        """按累计次数列出指纹聚类；query 匹配指纹、版本、模块、偏移与归属。"""
+        limit = max(1, min(1000, int(limit or 200)))
+        clauses = []
+        params = []
+        if repeated_only:
+            clauses.append("samples > 1")
+        query = (query or "").strip()
+        if query:
+            variants = [query]
+            match = re.fullmatch(r"(?:0[xX])?([0-9a-fA-F]{1,8})", query)
+            if match:
+                raw = match.group(1)
+                variants.extend(["0x" + raw.zfill(8).upper(), raw.upper()])
+            variants = list(dict.fromkeys(variants))
+            clauses.append(
+                "(instr(lower(signature), lower(?)) > 0"
+                " OR instr(lower(COALESCE(version, '')), lower(?)) > 0"
+                " OR instr(lower(COALESCE(module, '')), lower(?)) > 0"
+                " OR instr(lower(COALESCE(attribution, '')), lower(?)) > 0"
+                " OR " + " OR ".join(
+                    ["instr(lower(COALESCE(rva, '')), lower(?)) > 0"]
+                    * len(variants)) + ")")
+            params.extend([query] * 4)
+            params.extend(variants)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = ("SELECT signature, version, frames, module, rva, attribution,"
+               " confidence, samples, map_count, first_seen, last_seen"
+               " FROM crash_fingerprints" + where +
+               " ORDER BY samples DESC, last_seen DESC, signature LIMIT ?")
+        params.append(limit)
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+            conn.close()
+        except Exception:
+            return []
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                frames = json.loads(item.get("frames") or "[]")
+            except (TypeError, ValueError):
+                frames = []
+            item["frames"] = frames if isinstance(frames, list) else []
+            result.append(item)
+        return result
+
+    def fingerprint_samples(self, signature, limit=100):
+        """某个指纹的样本日志，按最近出现时间倒序。"""
+        if not signature:
+            return []
+        limit = max(1, min(500, int(limit or 100)))
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute('''
+                SELECT log_name, map_name, seen_at
+                FROM crash_fingerprint_samples
+                WHERE signature = ? COLLATE NOCASE
+                ORDER BY seen_at DESC, log_name
+                LIMIT ?
+            ''', (signature, limit)).fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
+        except Exception:
+            return []
+
+    def list_logs(self, limit=200, query=""):
+        """诊断日志列表；只取摘要，完整分析结果用 get_log 按需读取。"""
+        limit = max(1, min(1000, int(limit or 200)))
+        clauses = []
+        params = []
+        query = (query or "").strip()
+        if query:
+            clauses.append(
+                "(instr(lower(filename), lower(?)) > 0"
+                " OR instr(lower(COALESCE(analysis_result, '')), lower(?)) > 0)")
+            params.extend([query, query])
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = ("SELECT filename, diagnosed, reported, last_modified, timestamp,"
+               " substr(COALESCE(analysis_result, ''), 1, 200) AS summary"
+               " FROM processed_logs" + where +
+               " ORDER BY COALESCE(last_modified, 0) DESC, timestamp DESC,"
+               " filename LIMIT ?")
+        params.append(limit)
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
+        except Exception:
+            return []
+
+    def get_log(self, filename):
+        """按日志名读取完整诊断文本。"""
+        if not filename:
+            return None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute('''
+                SELECT filename, file_hash, last_modified, diagnosed, reported,
+                       timestamp, analysis_result
+                FROM processed_logs WHERE filename = ?
+            ''', (filename,)).fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception:
+            return None

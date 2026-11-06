@@ -28,3 +28,8 @@ def upload_status_page(code):
 @bp.route('/admin/uploads')
 def admin_uploads_page():
     return send_from_directory(current_app.static_folder, 'admin_uploads.html')
+
+
+@bp.route('/admin/cases')
+def admin_cases_page():
+    return send_from_directory(current_app.static_folder, 'admin_cases.html')

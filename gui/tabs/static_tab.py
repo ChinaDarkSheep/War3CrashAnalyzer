@@ -46,6 +46,9 @@ class StaticTab(BaseTab):
         self.crash_btn = tk.Button(btn_container, text="📄 诊断日志", command=self.analyze_last_crash, bg="#9b59b6", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.crash_btn.pack(side=tk.LEFT, padx=2)
 
+        self.history_btn = tk.Button(btn_container, text="📊 崩溃历史", command=self.open_history, bg="#607d8b", fg="white", font=("微软雅黑", 9, "bold"), width=12)
+        self.history_btn.pack(side=tk.LEFT, padx=2)
+
         self.export_bundle_btn = tk.Button(btn_container, text="📦 诊断包", command=self.export_diagnostic_bundle, bg="#16a085", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.export_bundle_btn.pack(side=tk.LEFT, padx=2)
 
@@ -133,6 +136,17 @@ class StaticTab(BaseTab):
             dialog.focus_force()
             return
         self.locator_dialog = FingerprintLocatorDialog(self, self.app)
+
+    def open_history(self):
+        from gui.history_dialog import CrashHistoryDialog
+        dialog = getattr(self, "history_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.deiconify()
+            dialog.lift()
+            dialog.focus_force()
+            dialog.refresh()
+            return
+        self.history_dialog = CrashHistoryDialog(self, self.app)
 
     def analyze_last_crash(self):
         self.update_status("正在启动批量分析流程...")

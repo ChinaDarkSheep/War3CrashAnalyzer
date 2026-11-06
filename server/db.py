@@ -106,6 +106,14 @@ def init_db():
                   last_seen DATETIME,
                   updated_at DATETIME)''')
 
+    # P2.9 案例合并：记录已写入知识库的目标，避免重复合并
+    c.execute("PRAGMA table_info(knowledge_cases)")
+    case_columns = [row[1] for row in c.fetchall()]
+    for name, decl in {'merged_at': 'DATETIME', 'merged_key': 'TEXT'}.items():
+        if name not in case_columns:
+            print(f"[*] 正在为案例表添加 {name} 列...")
+            c.execute(f"ALTER TABLE knowledge_cases ADD COLUMN {name} {decl}")
+
     # P2.6 原始日志上传：只记账单与派生字段，原始文件另存私有目录
     c.execute(UPLOAD_DB_SCHEMA)
     c.execute("CREATE INDEX IF NOT EXISTS idx_raw_uploads_hash "

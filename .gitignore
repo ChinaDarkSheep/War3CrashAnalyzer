@@ -8,6 +8,7 @@ dist/
 history.db
 server/crash_data.db
 server/uploads/
+server/knowledge_backups/
 temp_audit/
 temp_jass/
 ai_slicing/

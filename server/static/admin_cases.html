@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧩 案例复核与知识库合并 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1560px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid #eee; vertical-align: top; font-size: 0.9em; }
+        th { background-color: #fafafa; color: #666; font-weight: 600; white-space: nowrap; }
+        .table-wrap { overflow-x: auto; }
+        .table-wrap table { min-width: 1240px; }
+        .badge { padding: 3px 9px; border-radius: 6px; font-size: 0.78em; font-weight: bold; white-space: nowrap; }
+        .badge-danger { background-color: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+        .badge-info { background-color: #e0f2fe; color: var(--primary); border: 1px solid #bae6fd; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .badge-warning { background-color: #fef9c3; color: #a16207; border: 1px solid #fde68a; }
+        .badge-muted { background-color: #f1f2f6; color: #636e72; border: 1px solid #dfe6e9; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .query-row input[type="text"], .query-row input[type="password"], .query-row select {
+            padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px;
+            outline: none; font-size: 0.92em; background: white;
+        }
+        .query-row input[type="text"] { min-width: 210px; }
+        .query-row input[type="password"] { min-width: 300px; }
+        .query-row input:focus, .query-row select:focus { border-color: var(--primary); }
+        button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.92em;
+        }
+        button:disabled { background: #b2bec3; cursor: not-allowed; }
+        button.ghost { background: white; color: #636e72; border: 1px solid #dfe6e9; }
+        button.danger { background: var(--danger); }
+        button.small { padding: 5px 10px; font-size: 0.82em; }
+        .muted { color: #888; font-size: 0.86em; }
+        .mono { font-family: Consolas, 'Courier New', monospace; }
+        .code-badge { font-family: Consolas, monospace; font-size: 0.95em; font-weight: bold; color: var(--dark); }
+        .alert { display: none; margin-top: 12px; padding: 12px 14px; border-radius: 6px; font-size: 0.9em; background: #e0f2fe; color: #0369a1; line-height: 1.65; white-space: pre-line; }
+        .alert.show { display: block; }
+        .alert.error { background: #fee2e2; color: #b91c1c; }
+        .pager { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+        .empty { text-align: center; color: #999; padding: 24px; }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .selection-bar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e5e9ec; }
+        .selection-bar label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9em; color: #555; cursor: pointer; }
+        .cause { max-height: 4.6em; overflow: hidden; line-height: 1.5; color: #444; }
+        .target-line { font-family: Consolas, monospace; font-size: 0.82em; color: #555; word-break: break-all; margin-top: 4px; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 18px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 13px; }
+        .meta-item .label { color: #888; font-size: 0.76em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; font-size: 0.9em; }
+        .detail-pre { background: #1e252b; color: #e6edf3; padding: 14px; border-radius: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.8em; }
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 30px 16px; overflow-y: auto; z-index: 50; }
+        .modal[hidden] { display: none; }
+        .modal-body { background: white; border-radius: 12px; width: 100%; max-width: 980px; padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
+        .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+        .modal-head h2 { margin: 0; }
+        .modal-head button { background: transparent; color: #636e72; font-size: 1.3em; padding: 2px 8px; }
+        #confirm-modal { align-items: center; z-index: 60; }
+        .confirm-box { background: white; border-radius: 12px; width: 100%; max-width: 460px; padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
+        .confirm-box h3 { margin-top: 0; }
+        .confirm-box p { color: #555; line-height: 1.6; white-space: pre-line; }
+        .confirm-box .toolbar { justify-content: flex-end; margin-top: 14px; }
+        #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+        .toast-item { background: #2c3e50; color: white; padding: 10px 18px; border-radius: 8px; font-size: 0.9em; box-shadow: 0 6px 18px rgba(0,0,0,0.2); opacity: 0; transition: opacity 0.25s; max-width: 90vw; }
+        .toast-item.error { background: #b91c1c; }
+        h3 { font-size: 1rem; margin: 22px 0 10px; color: var(--dark); }
+        .case-title { font-weight: 600; color: var(--dark); }
+        .check-col { width: 34px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧩 案例复核与知识库合并</h1>
+            <p>仅维护者可见：复核作者标注，导出或写入共享 knowledge.json</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+            <a class="nav-link" href="/admin/uploads">📁 上传管理</a>
+        </header>
+
+        <div class="card" id="auth-card">
+            <h2>管理令牌</h2>
+            <div class="query-row">
+                <input type="password" id="token-input" placeholder="WAR3_ADMIN_TOKEN" autocomplete="off">
+                <button id="token-btn">进入管理</button>
+                <button id="token-clear" class="ghost">清除令牌</button>
+            </div>
+            <p class="muted">令牌只保存在当前浏览器的 sessionStorage。合并写入会先备份 knowledge.json 到 server/knowledge_backups/，并立即生效；服务端未设置 WAR3_ADMIN_TOKEN 时返回 503。</p>
+            <div class="alert" id="auth-alert"></div>
+        </div>
+
+        <div id="main" hidden>
+            <div class="card">
+                <h2>筛选案例</h2>
+                <div class="query-row">
+                    <input type="text" id="q-input" placeholder="结论 / 标注人 / 地图 / 签名">
+                    <input type="text" id="module-input" placeholder="模块，如 Game.dll" style="min-width: 160px;">
+                    <input type="text" id="version-input" placeholder="版本，如 1.27a" style="min-width: 130px;">
+                    <select id="source-select">
+                        <option value="">全部来源</option>
+                        <option value="作者确认">作者确认</option>
+                        <option value="维护者确认">维护者确认</option>
+                        <option value="社区反馈">社区反馈</option>
+                    </select>
+                    <select id="merged-select">
+                        <option value="">合并状态：全部</option>
+                        <option value="0">未合并</option>
+                        <option value="1">已合并</option>
+                    </select>
+                    <button id="search-btn">查询</button>
+                    <button id="refresh-btn" class="ghost">刷新</button>
+                    <button id="logout-btn" class="ghost">更换令牌</button>
+                </div>
+                <p id="list-summary" class="muted"></p>
+                <div class="alert" id="list-alert"></div>
+            </div>
+
+            <div class="card">
+                <h2>案例列表</h2>
+                <div class="selection-bar">
+                    <label><input type="checkbox" id="select-all"> 全选本页可合并案例</label>
+                    <button id="merge-selected-btn" disabled>合并所选</button>
+                    <button id="preview-selected-btn" class="ghost" disabled>预览合并</button>
+                    <label><input type="checkbox" id="overwrite-check"> 允许覆盖已有条目</label>
+                    <span id="selection-label" class="muted">未选择案例</span>
+                </div>
+                <div class="alert" id="merge-alert"></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="check-col"></th>
+                                <th style="width: 190px;">案例 / 地图</th>
+                                <th style="width: 200px;">版本 / 模块偏移</th>
+                                <th style="width: 170px;">来源 / 置信度</th>
+                                <th style="width: 300px;">根因结论</th>
+                                <th style="width: 250px;">知识库目标</th>
+                                <th style="width: 170px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="case-rows"></tbody>
+                    </table>
+                </div>
+                <div class="pager">
+                    <button id="prev-btn" class="ghost" disabled>上一页</button>
+                    <span id="page-label" class="muted"></span>
+                    <button id="next-btn" class="ghost" disabled>下一页</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="detail-modal" hidden>
+        <div class="modal-body">
+            <div class="modal-head">
+                <h2 id="detail-title">案例详情</h2>
+                <button id="detail-close" title="关闭">✕</button>
+            </div>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <div class="modal" id="confirm-modal" hidden>
+        <div class="confirm-box">
+            <h3 id="confirm-title">确认合并</h3>
+            <p id="confirm-message"></p>
+            <div class="toolbar">
+                <button class="ghost" id="confirm-cancel">取消</button>
+                <button id="confirm-ok">确认合并</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const TOKEN_KEY = 'war3_admin_token';
+        const state = {
+            token: sessionStorage.getItem(TOKEN_KEY) || '',
+            limit: 50,
+            offset: 0,
+            total: 0,
+            cases: [],
+            selected: new Set(),
+            detailSig: null
+        };
+
+        const $ = (id) => document.getElementById(id);
+
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function showAlert(id, message, isError) {
+            const box = $(id);
+            box.textContent = message || '';
+            box.className = 'alert' + (message ? ' show' : '') + (isError ? ' error' : '');
+        }
+
+        function toast(message, isError) {
+            const item = document.createElement('div');
+            item.className = 'toast-item' + (isError ? ' error' : '');
+            item.textContent = message;
+            $('toast').appendChild(item);
+            requestAnimationFrame(() => { item.style.opacity = '1'; });
+            setTimeout(() => {
+                item.style.opacity = '0';
+                setTimeout(() => item.remove(), 260);
+            }, 3600);
+        }
+
+        function headers(extra) {
+            return Object.assign({ 'X-Admin-Token': state.token }, extra || {});
+        }
+
+        async function api(path, options) {
+            const opts = Object.assign({}, options || {});
+            opts.headers = headers(opts.headers);
+            const response = await fetch(path, opts);
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (err) {
+                data = null;
+            }
+            if (!response.ok) {
+                const error = new Error((data && data.message) || `请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        }
+
+        function sourceBadge(value) {
+            if (!value) return '<span class="badge badge-muted">未标注来源</span>';
+            const cls = value === '作者确认' ? 'badge-success'
+                : value === '维护者确认' ? 'badge-info' : 'badge-warning';
+            return `<span class="badge ${cls}">${esc(value)}</span>`;
+        }
+
+        function confidenceText(value) {
+            return value == null ? '<span class="muted">置信度未知</span>'
+                : `<div class="muted">置信度 ${Math.round(Number(value) * 100)}%</div>`;
+        }
+
+        function mergeStatus(c) {
+            if (c.merged_at) {
+                return `<span class="badge badge-success">已合并</span>
+                        <div class="target-line">${esc(c.merged_key || '')}</div>
+                        <div class="muted">${esc(c.merged_at)}</div>`;
+            }
+            const merge = c.merge || {};
+            if (!merge.mergeable) {
+                return `<span class="badge badge-danger">不可合并</span>
+                        <div class="muted">${esc(merge.reason || '缺少目标地址')}</div>`;
+            }
+            const target = `<div class="target-line">${esc(merge.target || '')}</div>`;
+            if (merge.conflict) {
+                return `<span class="badge badge-warning">地址已存在</span>${target}
+                        <div class="muted">默认跳过；勾选“允许覆盖”后更新</div>`;
+            }
+            const versionHint = merge.new_version
+                ? '<div class="muted">将新建版本段</div>' : '';
+            return `<span class="badge badge-info">可合并</span>${target}${versionHint}`;
+        }
+
+        function renderRows(items) {
+            const tbody = $('case-rows');
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty">没有匹配的案例</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map((c) => {
+                const merge = c.merge || {};
+                const disabled = merge.mergeable ? '' : 'disabled';
+                const checked = state.selected.has(c.signature) ? 'checked' : '';
+                const mapLine = c.map_name
+                    ? `<div>${esc(c.map_name)}</div>` : '<div class="muted">地图未知</div>';
+                const mapHash = c.map_hash
+                    ? `<div class="muted mono">${esc(c.map_hash)}</div>` : '';
+                const position = `${esc(c.module || '?')}+${esc(c.relative_offset || '?')}`;
+                const occurrence = c.occurrence == null ? '' : ` · ${c.occurrence} 次`;
+                return `<tr>
+                    <td class="check-col"><input type="checkbox" data-sig="${esc(c.signature)}" ${checked} ${disabled}></td>
+                    <td>
+                        <div class="case-title mono">${esc(c.signature)}</div>
+                        ${mapLine}${mapHash}
+                        <div class="muted mono">指纹 ${esc(c.fingerprint || '—')}</div>
+                    </td>
+                    <td>
+                        <span class="badge badge-info">${esc(c.game_version || '版本未知')}</span>
+                        <div class="mono" style="margin-top: 5px;">${position}</div>
+                        <div class="muted">${esc(c.updated_at || '')}${occurrence}</div>
+                    </td>
+                    <td>${sourceBadge(c.source)}${confidenceText(c.confidence)}
+                        <div class="muted">${esc(c.annotator || '未署名')}</div>
+                    </td>
+                    <td><div class="cause" title="${esc(c.cause)}">${esc(c.cause)}</div></td>
+                    <td>${mergeStatus(c)}</td>
+                    <td>
+                        <button class="small" data-action="detail" data-sig="${esc(c.signature)}">详情</button>
+                        <button class="small ghost" data-action="export" data-sig="${esc(c.signature)}" ${merge.mergeable ? '' : 'disabled'}>导出</button>
+                        <button class="small ghost" data-action="merge" data-sig="${esc(c.signature)}" ${merge.mergeable ? '' : 'disabled'}>合并</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function updatePager() {
+            const start = state.total ? state.offset + 1 : 0;
+            const end = Math.min(state.offset + state.limit, state.total);
+            $('page-label').textContent = `第 ${start}-${end} 条 / 共 ${state.total} 条`;
+            $('prev-btn').disabled = state.offset <= 0;
+            $('next-btn').disabled = state.offset + state.limit >= state.total;
+        }
+
+        function updateSelection() {
+            const selected = state.cases.filter((c) => state.selected.has(c.signature));
+            const mergeable = selected.filter((c) => c.merge && c.merge.mergeable);
+            const mergeablePage = state.cases.filter((c) => c.merge && c.merge.mergeable);
+            $('selection-label').textContent = selected.length
+                ? `已选择 ${selected.length} 条，可合并 ${mergeable.length} 条`
+                : '未选择案例';
+            $('merge-selected-btn').disabled = !mergeable.length;
+            $('preview-selected-btn').disabled = !mergeable.length;
+            $('select-all').checked = mergeablePage.length > 0
+                && mergeablePage.every((c) => state.selected.has(c.signature));
+        }
+
+        async function loadList() {
+            showAlert('list-alert', '');
+            const params = new URLSearchParams();
+            const keyword = $('q-input').value.trim();
+            const module = $('module-input').value.trim();
+            const version = $('version-input').value.trim();
+            const source = $('source-select').value;
+            const merged = $('merged-select').value;
+            if (keyword) params.set('q', keyword);
+            if (module) params.set('module', module);
+            if (version) params.set('version', version);
+            if (source) params.set('source', source);
+            if (merged) params.set('merged', merged);
+            params.set('limit', String(state.limit));
+            params.set('offset', String(state.offset));
+
+            $('search-btn').disabled = true;
+            try {
+                const data = await api('/api/admin/cases?' + params.toString());
+                state.total = data.total;
+                state.cases = data.cases || [];
+                state.selected.clear();
+                renderRows(state.cases);
+                updatePager();
+                updateSelection();
+                const mergeable = state.cases.filter((c) => c.merge && c.merge.mergeable).length;
+                const conflicts = state.cases.filter((c) => c.merge && c.merge.conflict).length;
+                $('list-summary').textContent =
+                    `本页 ${state.cases.length} 条 · 可合并 ${mergeable} 条 · 地址冲突 ${conflicts} 条`;
+                if (data.kb_error) {
+                    showAlert('list-alert', data.kb_error, true);
+                }
+                $('auth-card').hidden = true;
+                $('main').hidden = false;
+                showAlert('auth-alert', '');
+            } catch (error) {
+                if (error.status === 403 || error.status === 503) {
+                    $('main').hidden = true;
+                    $('auth-card').hidden = false;
+                    showAlert('auth-alert', error.message, true);
+                } else {
+                    showAlert('list-alert', error.message, true);
+                }
+            } finally {
+                $('search-btn').disabled = false;
+            }
+        }
+
+        let confirmResolver = null;
+
+        function askConfirm(title, message) {
+            $('confirm-title').textContent = title || '确认合并';
+            $('confirm-message').textContent = message;
+            $('confirm-modal').hidden = false;
+            return new Promise((resolve) => { confirmResolver = resolve; });
+        }
+
+        function closeConfirm(result) {
+            $('confirm-modal').hidden = true;
+            if (confirmResolver) {
+                const resolve = confirmResolver;
+                confirmResolver = null;
+                resolve(result);
+            }
+        }
+
+        function renderMergeResult(data) {
+            const counts = data.counts || {};
+            const lines = [];
+            if (data.dry_run) lines.push('预览模式：未写入知识库。');
+            (data.results || []).forEach((item) => {
+                if (item.status === 'merged') {
+                    lines.push(`✅ ${item.signature} → ${item.target}`);
+                } else if (item.status === 'preview') {
+                    lines.push(`👁 ${item.signature} → ${item.target}`);
+                } else if (item.status === 'conflict') {
+                    lines.push(`⚠ ${item.signature}：${item.reason}（${item.target}）`);
+                } else {
+                    lines.push(`✖ ${item.signature}：${item.reason || item.status}`);
+                }
+            });
+            const summary = [
+                data.dry_run ? '预览' : '合并',
+                `成功 ${data.dry_run ? (counts.preview || 0) : (counts.merged || 0)} 条`,
+                `冲突 ${counts.conflict || 0} 条`,
+                `跳过 ${(counts.invalid || 0) + (counts.not_found || 0)} 条`
+            ].join('，');
+            showAlert('merge-alert', summary + '\n' + lines.join('\n'),
+                      Boolean(counts.error));
+            toast(summary, Boolean(counts.error));
+        }
+
+        async function mergeSignatures(signatures, dryRun) {
+            if (!signatures.length) {
+                toast('请先选择要合并的案例', true);
+                return;
+            }
+            const overwrite = $('overwrite-check').checked;
+            if (!dryRun) {
+                const selected = state.cases.filter((c) => signatures.includes(c.signature));
+                const conflicts = selected.filter((c) => c.merge && c.merge.conflict).length;
+                let message = `将把 ${signatures.length} 条案例写入 knowledge.json。\n\n`
+                    + '写入前会自动备份原文件，合并后服务端诊断立即生效。';
+                if (conflicts) {
+                    message += overwrite
+                        ? `\n\n其中 ${conflicts} 条地址已存在，将按当前结论覆盖（保留原有归属/建议字段）。`
+                        : `\n\n其中 ${conflicts} 条地址已存在，将跳过；如需覆盖请勾选“允许覆盖已有条目”。`;
+                }
+                const confirmed = await askConfirm('确认合并到知识库', message);
+                if (!confirmed) return;
+            }
+            $('merge-selected-btn').disabled = true;
+            $('preview-selected-btn').disabled = true;
+            try {
+                const data = await api('/api/admin/cases/merge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ signatures, overwrite, dry_run: dryRun })
+                });
+                renderMergeResult(data);
+                if (!dryRun) await loadList();
+            } catch (error) {
+                showAlert('merge-alert', `操作失败：${error.message}`, true);
+                toast(`操作失败：${error.message}`, true);
+            } finally {
+                updateSelection();
+            }
+        }
+
+        async function exportCase(signature) {
+            try {
+                const response = await fetch(
+                    `/api/admin/cases/${encodeURIComponent(signature)}/export`,
+                    { headers: headers() });
+                if (!response.ok) {
+                    let message = `导出失败（${response.status}）`;
+                    try {
+                        const data = await response.json();
+                        message = data.message || message;
+                    } catch (err) { /* 非 JSON 响应 */ }
+                    toast(message, true);
+                    return;
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `knowledge-case-${signature}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+                toast(`已导出 ${signature} 的知识库条目。`);
+            } catch (error) {
+                toast(`导出失败：${error.message}`, true);
+            }
+        }
+
+        function metaItem(label, value) {
+            return `<div class="meta-item"><div class="label">${esc(label)}</div>
+                    <div class="value">${value == null || value === '' ? '—' : esc(value)}</div></div>`;
+        }
+
+        function openDetail(signature) {
+            const c = state.cases.find((item) => item.signature === signature);
+            if (!c) return;
+            state.detailSig = signature;
+            const merge = c.merge || {};
+            const existing = merge.existing
+                ? `<pre class="detail-pre">${esc(JSON.stringify(merge.existing, null, 2))}</pre>`
+                : '<p class="muted">目标地址尚无条目，合并将新建。</p>';
+            const status = merge.mergeable
+                ? (merge.conflict ? '目标地址已存在，默认跳过' : '可直接合并')
+                : `不可合并：${merge.reason || '未知原因'}`;
+            $('detail-title').textContent = `案例 ${c.signature}`;
+            $('detail-content').innerHTML = `
+                <div class="meta-grid">
+                    ${metaItem('签名', c.signature)}
+                    ${metaItem('更新 / 首见', `${c.updated_at || '—'} / ${c.first_seen || '—'}`)}
+                    ${metaItem('地图 / 哈希', `${c.map_name || '未知'} / ${c.map_hash || '—'}`)}
+                    ${metaItem('指纹', c.fingerprint)}
+                    ${metaItem('版本', c.game_version)}
+                    ${metaItem('模块偏移', `${c.module || '?'}+${c.relative_offset || '?'}`)}
+                    ${metaItem('来源 / 置信度', `${c.source || '—'} / ${c.confidence == null ? '—' : Math.round(Number(c.confidence) * 100) + '%'}`)}
+                    ${metaItem('标注人 / 次数', `${c.annotator || '未署名'} / ${c.occurrence == null ? '—' : c.occurrence}`)}
+                    ${metaItem('合并状态', c.merged_at ? `已合并（${c.merged_at}）` : '未合并')}
+                </div>
+                <h3>根因结论</h3>
+                <pre class="detail-pre">${esc(c.cause || '')}</pre>
+                <h3>知识库目标</h3>
+                <p>${esc(status)}</p>
+                ${merge.target ? `<div class="target-line">${esc(merge.target)}</div>` : ''}
+                <h3>目标地址现有条目</h3>
+                ${existing}
+                <div class="toolbar" style="margin-top: 18px;">
+                    <button class="small ghost" data-detail-action="export" ${merge.mergeable ? '' : 'disabled'}>导出条目</button>
+                    <button class="small" data-detail-action="merge" ${merge.mergeable ? '' : 'disabled'}>合并此条</button>
+                    <button class="small ghost" data-detail-action="close">关闭</button>
+                </div>`;
+            $('detail-modal').hidden = false;
+        }
+
+        function closeDetail() {
+            $('detail-modal').hidden = true;
+            state.detailSig = null;
+        }
+
+        $('token-btn').addEventListener('click', async () => {
+            const value = $('token-input').value.trim();
+            if (!value) {
+                showAlert('auth-alert', '请先填写管理令牌', true);
+                return;
+            }
+            state.token = value;
+            sessionStorage.setItem(TOKEN_KEY, value);
+            state.offset = 0;
+            await loadList();
+        });
+
+        $('token-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') $('token-btn').click();
+        });
+
+        $('token-clear').addEventListener('click', () => {
+            sessionStorage.removeItem(TOKEN_KEY);
+            state.token = '';
+            $('token-input').value = '';
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            showAlert('auth-alert', '令牌已清除', false);
+        });
+
+        $('logout-btn').addEventListener('click', () => {
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            $('token-input').value = state.token;
+        });
+
+        $('search-btn').addEventListener('click', () => {
+            state.offset = 0;
+            loadList();
+        });
+
+        $('refresh-btn').addEventListener('click', loadList);
+
+        $('prev-btn').addEventListener('click', () => {
+            state.offset = Math.max(0, state.offset - state.limit);
+            loadList();
+        });
+
+        $('next-btn').addEventListener('click', () => {
+            state.offset += state.limit;
+            loadList();
+        });
+
+        $('select-all').addEventListener('change', (event) => {
+            state.cases.forEach((c) => {
+                if (event.target.checked && c.merge && c.merge.mergeable) {
+                    state.selected.add(c.signature);
+                } else {
+                    state.selected.delete(c.signature);
+                }
+            });
+            renderRows(state.cases);
+            updateSelection();
+        });
+
+        $('case-rows').addEventListener('change', (event) => {
+            const box = event.target.closest('input[data-sig]');
+            if (!box) return;
+            if (box.checked) state.selected.add(box.dataset.sig);
+            else state.selected.delete(box.dataset.sig);
+            updateSelection();
+        });
+
+        $('case-rows').addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+            const signature = button.dataset.sig;
+            if (button.dataset.action === 'detail') openDetail(signature);
+            else if (button.dataset.action === 'export') exportCase(signature);
+            else if (button.dataset.action === 'merge') mergeSignatures([signature], false);
+        });
+
+        $('merge-selected-btn').addEventListener('click', () => {
+            mergeSignatures(Array.from(state.selected), false);
+        });
+
+        $('preview-selected-btn').addEventListener('click', () => {
+            mergeSignatures(Array.from(state.selected), true);
+        });
+
+        $('detail-close').addEventListener('click', closeDetail);
+
+        $('detail-modal').addEventListener('click', (event) => {
+            if (event.target === $('detail-modal')) closeDetail();
+        });
+
+        $('detail-content').addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-detail-action]');
+            if (!button) return;
+            const action = button.dataset.detailAction;
+            const signature = state.detailSig;
+            if (action === 'close') closeDetail();
+            else if (action === 'export') exportCase(signature);
+            else if (action === 'merge') {
+                closeDetail();
+                mergeSignatures([signature], false);
+            }
+        });
+
+        $('confirm-cancel').addEventListener('click', () => closeConfirm(false));
+        $('confirm-ok').addEventListener('click', () => closeConfirm(true));
+        $('confirm-modal').addEventListener('click', (event) => {
+            if (event.target === $('confirm-modal')) closeConfirm(false);
+        });
+
+        if (state.token) {
+            $('token-input').value = state.token;
+            loadList();
+        }
+    </script>
+</body>
+</html>
