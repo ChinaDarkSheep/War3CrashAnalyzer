@@ -18,7 +18,7 @@ SERVER_UPLOAD_URLS = (
     "http://ca.darksheep.vip/api/upload",
     "http://43.163.75.93:2234/api/upload",
 )
-USER_AGENT = "War3CrashAnalyzer/1.0 (+https://github.com/ChinaDarkSheep/War3CrashAnalyzer)"
+USER_AGENT = "War3CrashAnalyzer/1.1 (+https://github.com/ChinaDarkSheep/War3CrashAnalyzer)"
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_FILES_PER_ZONE = 40

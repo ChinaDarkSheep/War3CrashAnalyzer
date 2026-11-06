@@ -23,7 +23,7 @@ CONFIG_FILE = "analyzer_config.json"
 class War3SuperAnalyzerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("魔兽 RPG 崩溃分析工具 v1.0.0 - By DarkSheep (肥羊小站)")
+        self.root.title("魔兽 RPG 崩溃分析工具 v1.1.0 - By DarkSheep (肥羊小站)")
         self.root.geometry("1100x900")
         self.root.configure(bg="#f5f6f7")
 
@@ -58,7 +58,7 @@ class War3SuperAnalyzerGUI:
         
         if platform.system() == "Windows":
             try:
-                myappid = 'darksheep.war3analyzer.1.0'
+                myappid = 'darksheep.war3analyzer.1.1'
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             except Exception:
                 pass
@@ -155,7 +155,7 @@ class War3SuperAnalyzerGUI:
         # Header (Simplified for example)
         header = tk.Frame(self.root, bg="#2c3e50", height=60)
         header.pack(fill=tk.X)
-        tk.Label(header, text="魔兽RPG崩溃分析工具 v1.0.0", font=("Segoe UI", 14, "bold"), fg="white", bg="#2c3e50").pack(side=tk.LEFT, padx=20)
+        tk.Label(header, text="魔兽RPG崩溃分析工具 v1.1.0", font=("Segoe UI", 14, "bold"), fg="white", bg="#2c3e50").pack(side=tk.LEFT, padx=20)
 
         # Tabs
         self.notebook = ttk.Notebook(self.root)
