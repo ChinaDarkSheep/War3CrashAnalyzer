@@ -96,6 +96,7 @@
             <p>选择崩溃记录文件夹，必要时再附上 KK 平台日志；本地只上传日志文本、dump 与 bin，不上传地图文件</p>
             <a class="nav-link" href="/">← 返回总览</a>
             <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+            <a class="nav-link" href="/download">⬇️ 下载客户端</a>
         </header>
 
         <div class="card" id="upload-card">
@@ -375,6 +376,7 @@
             const fields = [
                 ['游戏版本', data.game_version || '未识别'],
                 ['地图', data.map_name || '未识别'],
+                ['地图作者', data.map_author || '未识别'],
                 ['地图 MD5', data.map_hash || '未识别'],
                 ['崩溃位置', data.relative_offset || '未识别'],
                 ['归属模块', data.module || '未识别'],

@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
-from common import _aggregate_identity, _fingerprint, _map_hash, _parse_json, _text
+from common import (
+    _aggregate_identity, _clean_map_field, _fingerprint, _map_hash, _module,
+    _parse_json, _public_map_name, _public_text, _text)
 from db import DB_PATH
 
 bp = Blueprint('aggregates', __name__)
@@ -65,13 +67,20 @@ def get_aggregates():
     c = conn.cursor()
     c.execute(f"SELECT COUNT(*) FROM crash_aggregates{where_clause}", params)
     total = c.fetchone()[0]
-    c.execute(f"SELECT signature, map_key, map_hash, map_name, fingerprint, "
-              f"game_version, module, relative_offset, attribution, occurrence, "
-              f"annotation, first_seen, last_seen, last_report_id "
+    c.execute(f"SELECT signature, map_key, map_hash, map_name, map_author, "
+              f"fingerprint, game_version, module, relative_offset, attribution, "
+              f"occurrence, annotation, first_seen, last_seen, last_report_id "
               f"FROM crash_aggregates{where_clause} "
               f"ORDER BY occurrence DESC, last_seen DESC LIMIT ?",
               params + [limit])
-    aggregates = [dict(row) for row in c.fetchall()]
+    aggregates = []
+    for row in c.fetchall():
+        item = dict(row)
+        item['module'] = _module(item.get('module'))
+        item['map_name'] = _public_map_name(item.get('map_name'))
+        item['map_author'] = _clean_map_field(
+            item.get('map_author'), 80, strip_path=False)
+        aggregates.append(item)
     conn.close()
     return jsonify({"total": total, "aggregates": aggregates})
 
@@ -86,10 +95,10 @@ def get_aggregate_detail(signature):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT signature, map_key, map_hash, map_name, fingerprint, "
-              "game_version, module, relative_offset, attribution, occurrence, "
-              "annotation, annotation_source, annotation_confidence, annotator, "
-              "annotated_at, first_seen, last_seen, last_report_id "
+    c.execute("SELECT signature, map_key, map_hash, map_name, map_author, "
+              "fingerprint, game_version, module, relative_offset, attribution, "
+              "occurrence, annotation, annotation_source, annotation_confidence, "
+              "annotator, annotated_at, first_seen, last_seen, last_report_id "
               "FROM crash_aggregates WHERE signature = ?", (signature,))
     row = c.fetchone()
     if row is None:
@@ -98,13 +107,17 @@ def get_aggregate_detail(signature):
 
     aggregate = dict(row)
     where, params = _aggregate_identity(aggregate)
+    aggregate['module'] = _module(aggregate.get('module'))
+    aggregate['map_name'] = _public_map_name(aggregate.get('map_name'))
+    aggregate['map_author'] = _clean_map_field(
+        aggregate.get('map_author'), 80, strip_path=False)
 
     c.execute(f"SELECT COUNT(*) FROM crash_reports WHERE {where}", params)
     sample_total = c.fetchone()[0]
 
-    c.execute(f"SELECT map_name, timestamp, game_version, attribution, confidence, "
-              f"module, relative_offset, crash_address, analysis_result, stack, "
-              f"fingerprint_frames, dmp_info FROM crash_reports WHERE {where} "
+    c.execute(f"SELECT map_name, map_author, timestamp, game_version, attribution, "
+              f"confidence, module, relative_offset, crash_address, analysis_result, "
+              f"stack, fingerprint_frames, dmp_info FROM crash_reports WHERE {where} "
               f"ORDER BY timestamp DESC LIMIT 20", params)
     samples = []
     for item in c.fetchall():
@@ -113,6 +126,14 @@ def get_aggregate_detail(signature):
         sample["fingerprint_frames"] = _parse_json(
             sample.pop("fingerprint_frames", None)) or []
         sample["dmp"] = _parse_json(sample.pop("dmp_info", None))
+        sample["module"] = _module(sample.get("module"))
+        sample["map_name"] = _public_map_name(sample.get("map_name"))
+        sample["map_author"] = _clean_map_field(
+            sample.get("map_author"), 80, strip_path=False)
+        sample["analysis_result"] = _public_text(sample.get("analysis_result"))
+        for frame in sample["stack"]:
+            if isinstance(frame, dict):
+                frame["module"] = _module(frame.get("module"))
         samples.append(sample)
 
     c.execute(f"SELECT date(timestamp) AS day, COUNT(*) AS count "

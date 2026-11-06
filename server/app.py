@@ -7,7 +7,7 @@
 - legacy_report.py 旧版 /api/report 的日志解析
 - upload_store.py  上传存储、zip 校验、崩溃区/KK 区解析、到期清理
 - diagnosis.py     服务端诊断与上传入库
-- blueprints/      页面、上传、管理端、案例复核、上报统计、聚合标注
+- blueprints/      页面、上传、管理端、案例复核、上报统计、聚合标注、下载配置
 """
 
 import os
@@ -22,6 +22,7 @@ from flask import Flask
 from blueprints.admin import bp as admin_bp
 from blueprints.aggregates import bp as aggregates_bp
 from blueprints.cases import bp as cases_bp
+from blueprints.downloads import bp as downloads_bp
 from blueprints.pages import bp as pages_bp
 from blueprints.reports import bp as reports_bp
 from blueprints.uploads import bp as uploads_bp, upload_too_large
@@ -40,6 +41,7 @@ def create_app():
     application.register_blueprint(cases_bp)
     application.register_blueprint(reports_bp)
     application.register_blueprint(aggregates_bp)
+    application.register_blueprint(downloads_bp)
     application.register_error_handler(413, upload_too_large)
 
     init_db()

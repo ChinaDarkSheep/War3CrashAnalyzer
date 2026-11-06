@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⬇️ 下载客户端 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 18px; }
+        .muted { color: #888; font-size: 0.88em; }
+        .small { font-size: 0.82em; }
+        .version-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+        .version { font-size: 1.5em; font-weight: 700; color: var(--dark); }
+        .download-row { margin: 20px 0; }
+        .download-btn {
+            display: inline-block; background: var(--success); color: white;
+            text-decoration: none; font-size: 1.05em; font-weight: 600;
+            padding: 14px 34px; border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(46,204,113,0.35);
+        }
+        .download-btn:hover { background: #27ae60; }
+        .code-row {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            background: #f0f8ff; border: 1px solid #bae6fd; border-radius: 10px;
+            padding: 14px 18px; margin-bottom: 16px;
+        }
+        .code-row .label { color: #5b7c8d; font-size: 0.9em; }
+        .code-row code {
+            font-family: Consolas, 'Courier New', monospace; font-size: 1.35em;
+            font-weight: 700; letter-spacing: 3px; color: var(--primary);
+        }
+        .code-row button {
+            padding: 6px 14px; border: 1px solid #bae6fd; border-radius: 6px;
+            background: white; color: var(--primary); cursor: pointer; font-size: 0.88em;
+        }
+        .code-row button:hover { background: #e0f2fe; }
+        .note-box { background: #f8f9fa; border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; }
+        .note-label { color: #888; font-size: 0.8em; margin-bottom: 6px; }
+        .note-box pre {
+            margin: 0; white-space: pre-wrap; word-break: break-word;
+            font-family: inherit; font-size: 0.95em; line-height: 1.7; color: #444;
+        }
+        .empty-state { text-align: center; padding: 26px 10px; }
+        .empty-icon { font-size: 2.4em; margin-bottom: 10px; }
+        .empty-state p { margin: 8px 0; }
+        .text-link { color: var(--primary); text-decoration: none; }
+        .text-link:hover { text-decoration: underline; }
+        .steps, .privacy { line-height: 1.9; color: #444; margin: 0; padding-left: 22px; }
+        .steps strong { color: var(--dark); }
+        .privacy li { margin-bottom: 4px; }
+        #copy-hint { color: var(--success); font-size: 0.85em; }
+        .error { color: var(--danger); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⬇️ 下载崩溃分析客户端</h1>
+            <p>下载、解压、运行，自动定位魔兽与 KK 平台目录</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/upload">📤 上传日志</a>
+            <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
+        </header>
+
+        <div class="card">
+            <h2>最新版本</h2>
+            <div id="loading" class="muted">正在读取下载信息…</div>
+
+            <div id="unavailable" hidden>
+                <div class="empty-state">
+                    <div class="empty-icon">🛠️</div>
+                    <p id="unavailable-title">暂时无法获取下载信息</p>
+                    <p class="muted" id="unavailable-message">请稍后刷新重试。</p>
+                </div>
+            </div>
+
+            <div id="unconfigured" hidden>
+                <div class="empty-state">
+                    <div class="empty-icon">🛠️</div>
+                    <p>维护者尚未配置客户端下载链接。</p>
+                    <p class="muted">请稍后再来，或先通过上传页提交崩溃日志。</p>
+                    <a class="text-link" href="/upload">前往上传日志 →</a>
+                </div>
+            </div>
+
+            <div id="configured" hidden>
+                <div class="version-row">
+                    <span class="version" id="version-text"></span>
+                    <span class="muted" id="updated-text"></span>
+                </div>
+                <div class="download-row">
+                    <a id="download-btn" class="download-btn"
+                       target="_blank" rel="noopener noreferrer" hidden>⬇️ 前往网盘下载</a>
+                </div>
+                <div class="code-row" id="code-row" hidden>
+                    <span class="label">网盘提取码</span>
+                    <code id="code-text"></code>
+                    <button id="copy-btn" type="button">复制</button>
+                    <span id="copy-hint" aria-live="polite"></span>
+                </div>
+                <div class="note-box" id="note-box" hidden>
+                    <div class="note-label">更新说明</div>
+                    <pre id="note-text"></pre>
+                </div>
+                <p class="muted small">链接由维护者随时更新；若无法打开，请稍后刷新本页。</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>使用步骤</h2>
+            <ol class="steps">
+                <li><strong>下载</strong>：点击上方按钮打开网盘，按提示输入提取码。</li>
+                <li><strong>解压</strong>：把压缩包解压到可写目录，避免放在受保护的系统目录。</li>
+                <li><strong>运行</strong>：双击客户端；工具会自动查找魔兽与 KK 平台目录，也可手动选择。</li>
+                <li><strong>诊断 / 上传</strong>：分析崩溃日志；如需维护者复核，可在工具内上传并记下 6 位上传码。</li>
+            </ol>
+        </div>
+
+        <div class="card">
+            <h2>隐私说明</h2>
+            <ul class="privacy">
+                <li>客户端只在本地读取崩溃日志与必要的目录信息，<strong>不会自动上传</strong>。</li>
+                <li>只有你主动点击上传时，才会把所选日志发送到服务器。</li>
+                <li>公开页面不会展示原始日志、系统信息、Windows 用户名、计算机名或本地路径。</li>
+                <li>原始文件默认保留 7~15 天，可联系维护者提前删除。</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+
+        function show(id) { $(id).hidden = false; }
+        function hide(id) { $(id).hidden = true; }
+
+        function render(data) {
+            hide('loading');
+            if (!data.configured) {
+                show('unconfigured');
+                return;
+            }
+            show('configured');
+            $('version-text').textContent = data.version || '当前版本';
+            $('updated-text').textContent = data.updated_at ? `更新于 ${data.updated_at}` : '';
+            const button = $('download-btn');
+            button.href = data.url;
+            button.hidden = false;
+            if (data.extract_code) {
+                $('code-text').textContent = data.extract_code;
+                show('code-row');
+            }
+            if (data.note) {
+                $('note-text').textContent = data.note;
+                show('note-box');
+            }
+        }
+
+        async function load() {
+            try {
+                const response = await fetch('/api/download', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                render(await response.json());
+            } catch (error) {
+                hide('loading');
+                show('unavailable');
+                $('unavailable-title').textContent = '暂时无法获取下载信息';
+                $('unavailable-message').textContent =
+                    `请求失败（${error.message}），请稍后刷新重试。`;
+            }
+        }
+
+        async function copyCode() {
+            const code = $('code-text').textContent.trim();
+            if (!code) return;
+            try {
+                await navigator.clipboard.writeText(code);
+            } catch (error) {
+                const area = document.createElement('textarea');
+                area.value = code;
+                document.body.appendChild(area);
+                area.select();
+                document.execCommand('copy');
+                area.remove();
+            }
+            $('copy-hint').textContent = '已复制';
+            setTimeout(() => { $('copy-hint').textContent = ''; }, 2000);
+        }
+
+        $('copy-btn').addEventListener('click', copyCode);
+        load();
+    </script>
+</body>
+</html>

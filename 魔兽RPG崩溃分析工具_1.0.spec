@@ -7,7 +7,7 @@ a = Analysis(
     binaries=[],
     datas=[('assets', 'assets'), ('plugins', 'plugins'), ('listfiles', 'listfiles'),
            ('MPQEditor.exe', '.'), ('knowledge.json', '.')],
-    hiddenimports=['gui.locator_dialog',
+    hiddenimports=['gui.locator_dialog', 'gui.jassdebug_dialog',
                    'minidump', 'minidump.minidumpfile', 'minidump.directory',
                    'minidump.constants', 'minidump.header',
                    'minidump.minidumpreader', 'minidump.common_structs',

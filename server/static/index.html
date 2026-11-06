@@ -69,6 +69,7 @@
             </div>
             <a class="nav-link" href="/upload">📤 上传日志 →</a>
             <a class="nav-link" href="/author">🧑‍💻 作者查询 →</a>
+            <a class="nav-link" href="/download">⬇️ 下载客户端 →</a>
         </header>
 
         <div class="stats-grid">
@@ -235,7 +236,7 @@
                 const aggregates = stats.top_fingerprints || [];
                 aggBody.innerHTML = aggregates.length ? aggregates.map(a => `
                     <tr>
-                        <td style="font-weight: 500;">${esc(a.map_name || '—')}</td>
+                        <td style="font-weight: 500;">${esc(a.map_name || '—')}${a.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(a.map_author)}</div>` : ''}</td>
                         <td>${esc(a.game_version || '—')}</td>
                         <td><code class="badge badge-info">${esc(a.signature)}</code></td>
                         <td>${esc([a.module, a.relative_offset].filter(Boolean).join(' ') || '—')}</td>
@@ -252,7 +253,7 @@
                 body.innerHTML = crashes.map(c => `
                     <tr>
                         <td style="color: #888; font-size: 0.9em;">${esc(new Date(c.timestamp).toLocaleString())}</td>
-                        <td style="font-weight: 500;">${esc(c.map_name)}</td>
+                        <td style="font-weight: 500;">${esc(c.map_name)}${c.map_author ? `<div style="font-weight:400;color:#888;font-size:0.85em;">作者 ${esc(c.map_author)}</div>` : ''}</td>
                         <td>${esc(c.game_version || '—')}</td>
                         <td>${esc(c.attribution || '—')}</td>
                         <td><code class="badge badge-info">${esc(c.fingerprint || '—')}</code></td>

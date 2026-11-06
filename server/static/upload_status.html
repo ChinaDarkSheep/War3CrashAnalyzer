@@ -37,6 +37,15 @@
         .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-weight: bold; }
         .badge-ok { background: #dcfce7; color: #1e8449; border: 1px solid #bbf7d0; }
         .badge-gone { background: #fdebd0; color: #a04000; border: 1px solid #fad7a0; }
+        .badge-info { background: #e0f2fe; color: #1d6fa5; border: 1px solid #bae6fd; }
+        .badge-warn { background: #fef9c3; color: #a16207; border: 1px solid #fde68a; }
+        .badge-idle { background: #f1f2f6; color: #636e72; border: 1px solid #dfe6e9; }
+        .feedback-box {
+            margin: 16px 0; border-radius: 10px; padding: 14px 16px;
+            background: #f2f8ff; border: 1px solid #d6e9fb;
+        }
+        .feedback-box .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .feedback-box .note { margin-top: 8px; white-space: pre-line; line-height: 1.65; color: #2c3e50; }
         .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
         .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 14px; }
         .meta-item .label { color: #888; font-size: 0.78em; margin-bottom: 4px; }
@@ -55,6 +64,7 @@
             <p>凭 6 位上传码查看本次采集的派生信息；原始日志不会在这里公开</p>
             <a class="nav-link" href="/">← 返回总览</a>
             <a class="nav-link" href="/upload">📤 上传日志</a>
+            <a class="nav-link" href="/download">⬇️ 下载客户端</a>
         </header>
 
         <div class="card" id="loading">
@@ -68,6 +78,14 @@
         <div class="card hidden" id="detail">
             <h2>上传码 <span class="code" id="code"></span></h2>
             <p id="raw-state"></p>
+            <div class="feedback-box">
+                <div class="head">
+                    <strong>维护者反馈</strong>
+                    <span class="badge badge-idle" id="feedback-status">待处理</span>
+                    <span class="muted" id="feedback-time"></span>
+                </div>
+                <div class="note" id="feedback-note"></div>
+            </div>
             <div class="meta-grid" id="meta"></div>
             <div class="analysis hidden" id="analysis"></div>
             <p class="muted">
@@ -127,6 +145,19 @@
                     ? '<span class="badge badge-ok">原始文件保留中</span>'
                     : '<span class="badge badge-gone">原始文件已到期删除</span>';
 
+                const feedback = data.feedback || { status: 'pending', label: '待处理' };
+                const badgeClass = {
+                    reviewing: 'badge-info',
+                    resolved: 'badge-ok',
+                    need_info: 'badge-warn'
+                }[feedback.status] || 'badge-idle';
+                $('feedback-status').textContent = feedback.label || '待处理';
+                $('feedback-status').className = 'badge ' + badgeClass;
+                $('feedback-time').textContent = feedback.updated_at
+                    ? '更新于 ' + feedback.updated_at : '维护者尚未更新';
+                $('feedback-note').textContent = feedback.note
+                    || '暂无备注；如需补充材料，请用同一上传码联系维护者。';
+
                 addField('上传时间', data.created_at || '-');
                 addField('原始文件保留至', data.expires_at || '-');
                 addField('保留天数', (data.retention_days || '-') + ' 天');
@@ -134,6 +165,7 @@
                 addField('总大小', formatBytes(data.total_bytes));
                 addField('游戏版本', data.game_version || '未识别');
                 addField('地图', data.map_name || '未识别');
+                addField('地图作者', data.map_author || '未识别');
                 addField('地图 MD5', data.map_hash || '未识别');
                 addField('崩溃位置', data.relative_offset || '未识别');
                 addField('归属模块', data.module || '未识别');

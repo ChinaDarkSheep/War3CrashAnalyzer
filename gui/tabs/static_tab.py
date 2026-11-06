@@ -63,6 +63,8 @@ class StaticTab(BaseTab):
             label="自动上报诊断数据", command=self.app.report_crash_to_server)
         self.report_menu.add_command(
             label="上传日志并获取上传码", command=self.app.open_upload_dialog)
+        self.report_menu.add_command(
+            label="查询上传码状态", command=self.app.open_upload_status_dialog)
         self.report_btn.config(menu=self.report_menu)
         self.report_btn.pack(side=tk.LEFT, padx=2)
 

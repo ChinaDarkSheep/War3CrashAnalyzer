@@ -206,16 +206,22 @@ class UploadLogsDialog(tk.Toplevel):
             return
         try:
             plan = uploader.plan_upload(
-                self.crash_info["log_path"], self._kk_dir())
+                self.crash_info["log_path"], self._kk_dir(),
+                self.app.war3_path.get())
         except uploader.UploadError as exc:
             self.plan_label.config(text=f"待上传内容不可用：{exc}", fg="#c0392b")
             return
         self._plan = plan
         kk_part = (f"，平台日志 {plan['kk_count']} 个"
                    f"（会话 {plan['kk_session']}）" if plan["kk_count"] else "")
+        meta = plan.get("map_meta") or {}
+        map_part = ""
+        if meta.get("name") or meta.get("author"):
+            map_part = (f"；地图 {meta.get('name') or '未知'}"
+                        f"（作者 {meta.get('author') or '未知'}）")
         self.plan_label.config(
             text=f"将上传 {plan['crash_count']} 个崩溃文件{kk_part}，"
-                 f"共 {_human_size(plan['total_bytes'])}。",
+                 f"共 {_human_size(plan['total_bytes'])}{map_part}。",
             fg="#16a085")
 
     # ---------- 上传 ----------
@@ -240,19 +246,26 @@ class UploadLogsDialog(tk.Toplevel):
             return
         try:
             kk_dir = self._kk_dir()
-            plan = uploader.plan_upload(self.crash_info["log_path"], kk_dir)
+            plan = uploader.plan_upload(
+                self.crash_info["log_path"], kk_dir, self.app.war3_path.get())
         except uploader.UploadError as exc:
             messagebox.showwarning("无法上传", str(exc), parent=self)
             return
 
         kk_text = (f"平台日志 {plan['kk_count']} 个（最近会话）"
                    if plan["kk_count"] else "不附加平台日志")
+        meta = plan.get("map_meta") or {}
+        map_text = ""
+        if meta.get("name") or meta.get("author"):
+            map_text = (f"• 地图：{meta.get('name') or '未知'}"
+                        f"（作者 {meta.get('author') or '未知'}）\n")
         confirm = (
             f"即将上传：\n"
             f"• 崩溃日志 {plan['crash_count']} 个\n"
             f"• {kk_text}\n"
+            f"{map_text}"
             f"• 合计 {_human_size(plan['total_bytes'])}\n\n"
-            "不会上传地图文件、配置或其它本机文件。\n"
+            "不会上传地图文件，仅读取地图名与作者随日志一起提交。\n"
             "原始日志在服务端私有保存 14 天后删除。\n\n"
             "确定现在上传吗？")
         if not messagebox.askyesno("确认上传", confirm, parent=self):
@@ -268,7 +281,8 @@ class UploadLogsDialog(tk.Toplevel):
             try:
                 payload = uploader.upload_logs(
                     self.crash_info["log_path"], kk_dir,
-                    log=self._log_threadsafe)
+                    log=self._log_threadsafe,
+                    war3_path=self.app.war3_path.get())
             except uploader.UploadError as exc:
                 self.after(0, self._failed, str(exc))
                 return
@@ -293,6 +307,12 @@ class UploadLogsDialog(tk.Toplevel):
         code = str(payload.get("code") or "")
         self.code_var.set(code)
         self.copy_btn.config(state=tk.NORMAL)
+        if code:
+            self.app.config["last_upload_code"] = code
+            try:
+                self.app.save_config()
+            except Exception:
+                pass
         if payload.get("duplicate"):
             self._append_log("[*] 相同内容此前已上传，返回原上传码。")
         self._append_log(f"[+] 上传成功，上传码 {code}"

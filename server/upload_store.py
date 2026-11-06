@@ -16,9 +16,13 @@ from datetime import datetime
 
 from flask import request
 
-from common import _map_hash, _parse_json, normalize_offset, normalize_version
+from common import (
+    _clean_map_field, _map_hash, _map_hash_from_name, _map_names_match,
+    _module, _parse_json, _public_map_name, _public_text, normalize_offset,
+    normalize_version)
 from settings import (
     DB_PATH,
+    FEEDBACK_STATUSES,
     KK_LOG_NAMES,
     MAX_FILES_PER_ZONE,
     MAX_STORED_FILES,
@@ -228,6 +232,15 @@ def _primary_priority(filename):
     return None
 
 
+def _request_map_meta():
+    """客户端附带的地图元数据；没有地图名时不单独接受作者。"""
+    name = _clean_map_field(request.form.get('map_name'))
+    if not name:
+        return None
+    author = _clean_map_field(request.form.get('map_author'), 80, strip_path=False)
+    return {'name': name, 'author': author}
+
+
 def _parse_crash_zone(root):
     """每个子目录视为一次崩溃记录，取优先级最高的文本日志做诊断。"""
     groups = defaultdict(list)
@@ -308,6 +321,8 @@ def _parse_kk_zone(root):
     if not md5s:
         md5s = re.findall(r'([0-9A-Fa-f]{32})\.(?:w3x|w3m|w3n)', text, re.IGNORECASE)
     map_hash = _map_hash(md5s[-1]) if md5s else None
+    if not map_hash and map_path:
+        map_hash = _map_hash_from_name(map_path)
 
     return {
         'files': len(files),
@@ -411,6 +426,20 @@ def cleanup_expired_uploads(force=False):
         conn.close()
 
 
+def _feedback_payload(row):
+    keys = row.keys()
+    status = row['feedback_status'] if 'feedback_status' in keys else None
+    if status not in FEEDBACK_STATUSES:
+        status = 'pending'
+    note = row['feedback_note'] if 'feedback_note' in keys else None
+    return {
+        'status': status,
+        'label': FEEDBACK_STATUSES[status],
+        'note': note or '',
+        'updated_at': row['feedback_at'] if 'feedback_at' in keys else None,
+    }
+
+
 def _public_upload(row):
     summary = _parse_json(row['summary']) or {}
     keys = row.keys()
@@ -425,16 +454,19 @@ def _public_upload(row):
         'has_crash': bool(row['has_crash']),
         'has_kk': bool(row['has_kk']),
         'game_version': row['game_version'],
-        'map_name': row['map_name'],
+        'map_name': _public_map_name(row['map_name']),
+        'map_author': _clean_map_field(row['map_author'], 80, strip_path=False)
+        if 'map_author' in keys else None,
         'map_hash': row['map_hash'],
-        'module': row['crash_module'],
+        'module': _module(row['crash_module']),
         'relative_offset': row['relative_offset'],
-        'analysis': row['analysis'],
+        'analysis': _public_text(row['analysis']),
         'kk_session': row['kk_session'],
         'fingerprint': row['fingerprint'] if 'fingerprint' in keys else None,
         'attribution': row['attribution'] if 'attribution' in keys else None,
         'confidence': row['confidence'] if 'confidence' in keys else None,
         'report_count': row['report_count'] if 'report_count' in keys else None,
+        'feedback': _feedback_payload(row),
         'summary': summary,
     }
 
@@ -451,17 +483,24 @@ def _representative_index(crash_records):
         ))
 
 
-def _upload_map_hash(map_name, kk_info, allow_unknown):
-    """只有地图名与 KK 会话一致（或崩溃记录本身没有地图名）时才附哈希。"""
-    if not kk_info:
-        return None
-    kk_hash = kk_info.get('map_hash')
+def _upload_map_hash(map_name, kk_info, allow_unknown, crash_name=None):
+    """地图哈希优先取崩溃日志里的 MD5 文件名，其次才用 KK 会话哈希。
+
+    只有地图名与 KK 会话一致（或崩溃记录本身没有地图名）时才附哈希，
+    避免把不同地图的崩溃挂到平台会话的地图哈希上。
+    """
+    kk_hash = (kk_info or {}).get('map_hash')
+    for candidate in (crash_name, map_name):
+        name_hash = _map_hash_from_name(candidate)
+        if name_hash:
+            if kk_hash and name_hash != kk_hash:
+                return None
+            return name_hash
     if not kk_hash:
         return None
-    kk_name = (kk_info.get('map_name') or '').strip()
     name = (map_name or '').strip()
     if not name or name == 'Unknown':
         return kk_hash if allow_unknown else None
-    if kk_name and name.lower() == kk_name.lower():
+    if _map_names_match(name, kk_info.get('map_name')):
         return kk_hash
     return None

@@ -197,6 +197,17 @@ class War3SuperAnalyzerGUI:
         self.upload_dialog = UploadLogsDialog(self.root, self)
         return self.upload_dialog
 
+    def open_upload_status_dialog(self):
+        from gui.upload_status_dialog import UploadStatusDialog
+        dialog = getattr(self, "upload_status_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.deiconify()
+            dialog.lift()
+            dialog.focus_force()
+            return dialog
+        self.upload_status_dialog = UploadStatusDialog(self.root, self)
+        return self.upload_status_dialog
+
     def upload_latest_crash(self, icon=None, item=None):
         self.show_window()
         self.root.after(100, self.open_upload_dialog)
@@ -212,7 +223,8 @@ class War3SuperAnalyzerGUI:
             "boot_start": self.boot_start,
             "min_to_tray": self.min_to_tray,
             "auto_collect": self.auto_collect,
-            "kk_log_path": self.config.get("kk_log_path", "")
+            "kk_log_path": self.config.get("kk_log_path", ""),
+            "last_upload_code": self.config.get("last_upload_code", "")
         }
         try:
             with open(os.path.join(self.exe_dir, CONFIG_FILE), 'w', encoding='utf-8') as f:
@@ -322,7 +334,8 @@ class War3SuperAnalyzerGUI:
 
 1. 崩溃追踪插件 (JassDebug)：
    - 操作：自动安装 JassDebug.asi 到魔兽目录。
-   - 作用：崩溃时可直接显示 JASS 报错行号，精准定位问题。
+   - 作用：本地客户端崩溃时弹出 JASS 语句、函数链与代码偏移；
+     可在「高级工具 & 设置」点击“解析弹窗”读取并解析。
 
 2. 自动上报崩溃日志：
    - 目的：收集大数据，优化通用崩溃库，帮助所有作者定位问题。

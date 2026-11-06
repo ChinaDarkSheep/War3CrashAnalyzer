@@ -80,6 +80,7 @@
             <p>选择地图文件（本地算 MD5，不上传）或输入地图名，查看该地图的崩溃指纹排行与脱敏样本</p>
             <a class="nav-link" href="/">← 返回总览</a>
             <a class="nav-link" href="/upload">📤 上传日志</a>
+            <a class="nav-link" href="/download">⬇️ 下载客户端</a>
         </header>
 
         <div class="card">
@@ -247,8 +248,11 @@
             }
 
             const mapLabel = aggregates[0].map_name || name || '未知地图';
+            const authorLabel = aggregates[0].map_author;
             const totalOccurrence = aggregates.reduce((sum, a) => sum + (a.occurrence || 0), 0);
-            summary.textContent = `地图：${mapLabel}　指纹：${total} 组　累计上报：${totalOccurrence} 次` +
+            summary.textContent = `地图：${mapLabel}` +
+                (authorLabel ? `（作者 ${authorLabel}）` : '') +
+                `　指纹：${total} 组　累计上报：${totalOccurrence} 次` +
                 (hash ? `　MD5：${hash}` : '');
             setStatus(`查询完成：${aggregates.length} 组指纹。点击任意行查看趋势与样本。`, false);
 
@@ -350,6 +354,7 @@
             const samples = data.samples || [];
             document.getElementById('detail-meta').innerHTML = [
                 metaItem('地图', agg.map_name),
+                metaItem('地图作者', agg.map_author),
                 metaItem('地图 MD5', agg.map_hash),
                 metaItem('游戏版本', agg.game_version),
                 metaItem('累计次数', agg.occurrence),

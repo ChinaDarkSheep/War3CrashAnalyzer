@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from core.map_meta import read_map_meta
+
 SERVER_UPLOAD_URLS = (
     "http://ca.darksheep.vip/api/upload",
     "http://43.163.75.93:2234/api/upload",
@@ -277,7 +279,84 @@ def _build_multipart(fields, files):
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def plan_upload(log_path, kk_dir=None):
+_KK_REL_MAP = re.compile(
+    r"wa\(661\),\s*path:\s*([^\r\n]+?\.(?:w3x|w3m|w3n))", re.IGNORECASE)
+_KK_ABS_MAP = re.compile(
+    r"([A-Za-z]:\\[^\r\n<>|\"?*]+?\.(?:w3x|w3m|w3n))", re.IGNORECASE)
+_MAP_META_CACHE = {}
+
+
+def _decode_log(raw):
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _within(path, root):
+    try:
+        return os.path.commonpath(
+            [os.path.abspath(path), os.path.abspath(root)]).lower() == \
+            os.path.abspath(root).lower()
+    except ValueError:
+        return False
+
+
+def _kk_map_candidates(kk_files):
+    """从 KK 的 war3dll.log / downloader.log 收集地图相对与绝对路径。"""
+    relatives, absolutes = [], []
+    for rel, path in kk_files:
+        if os.path.basename(rel).lower() not in ("war3dll.log", "downloader.log"):
+            continue
+        try:
+            with open(path, "rb") as handle:
+                text = _decode_log(handle.read(2 * 1024 * 1024))
+        except OSError:
+            continue
+        relatives.extend(match.group(1).strip() for match in _KK_REL_MAP.finditer(text))
+        absolutes.extend(match.group(1).strip() for match in _KK_ABS_MAP.finditer(text))
+    return relatives, absolutes
+
+
+def find_session_map(kk_files, war3_path):
+    """定位本次 KK 会话使用的本地地图文件；只允许读取魔兽目录内的文件。"""
+    war3_path = (war3_path or "").strip().strip('"')
+    if not war3_path or not os.path.isdir(war3_path):
+        return None
+    relatives, absolutes = _kk_map_candidates(kk_files)
+
+    for candidate in absolutes:
+        candidate = candidate.strip().strip('"')
+        if os.path.isfile(candidate) and _within(candidate, war3_path):
+            return os.path.abspath(candidate)
+
+    for relative in relatives:
+        relative = relative.replace("/", "\\").lstrip("\\")
+        candidate = os.path.join(war3_path, relative)
+        if os.path.isfile(candidate) and _within(candidate, war3_path):
+            return os.path.abspath(candidate)
+    return None
+
+
+def session_map_meta(kk_files, war3_path):
+    """读取会话地图的名称与作者；失败或非本地可信路径时返回 None。"""
+    map_path = find_session_map(kk_files, war3_path)
+    if not map_path:
+        return None
+    try:
+        stat = os.stat(map_path)
+    except OSError:
+        return None
+    cache_key = (map_path.lower(), stat.st_mtime, stat.st_size)
+    if cache_key not in _MAP_META_CACHE:
+        _MAP_META_CACHE[cache_key] = read_map_meta(map_path)
+    meta = _MAP_META_CACHE[cache_key]
+    return dict(meta) if meta else None
+
+
+def plan_upload(log_path, kk_dir=None, war3_path=None):
     """生成上传清单，供界面展示与体积校验。"""
     crash_files = collect_crash_files(log_path)
     kk_files = collect_kk_files(kk_dir) if kk_dir else []
@@ -291,6 +370,7 @@ def plan_upload(log_path, kk_dir=None):
         "kk_count": len(kk_files),
         "total_bytes": total,
         "kk_session": os.path.basename(find_latest_kk_session(kk_dir)) if kk_dir else None,
+        "map_meta": session_map_meta(kk_files, war3_path) if kk_files else None,
     }
 
 
@@ -303,20 +383,73 @@ def _post(url, body, content_type, timeout):
         return json.loads(response.read().decode("utf-8"))
 
 
-def upload_logs(log_path, kk_dir=None, server_urls=None, timeout=60, log=None):
+def _status_url(upload_url, code):
+    base = upload_url.rstrip("/")
+    if base.endswith("/api/upload"):
+        base = base[:-len("/api/upload")]
+    return f"{base}/api/upload/{code}"
+
+
+def query_upload(code, server_urls=None, timeout=10):
+    """按 6 位上传码查询公开状态与维护者反馈。"""
+    code = (code or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise UploadError("上传码应为 6 位数字")
+    urls = list(server_urls or SERVER_UPLOAD_URLS)
+    last_error = None
+    for upload_url in urls:
+        request = urllib.request.Request(
+            _status_url(upload_url, code), method="GET",
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                     "Cache-Control": "no-cache"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                data = json.loads(exc.read().decode("utf-8"))
+                detail = data.get("message") or data.get("error") or ""
+            except Exception:
+                pass
+            if exc.code == 429:
+                raise UploadError(detail or "查询过于频繁，请稍后再试")
+            last_error = UploadError(detail or f"查询失败（HTTP {exc.code}）")
+            continue
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = UploadError(f"无法连接查询服务器：{exc}")
+            continue
+        if isinstance(payload, dict) and payload.get("code"):
+            payload.setdefault("server", request.full_url)
+            return payload
+        last_error = UploadError("查询服务返回内容无法识别")
+    raise last_error or UploadError("查询失败，请检查网络后重试")
+
+
+def upload_logs(log_path, kk_dir=None, server_urls=None, timeout=60, log=None,
+                war3_path=None):
     """上传最近崩溃与可选 KK 会话，返回服务端响应（含 6 位上传码）。"""
     notify = log or (lambda message: None)
-    plan = plan_upload(log_path, kk_dir)
+    plan = plan_upload(log_path, kk_dir, war3_path)
     crash_files = plan["crash_files"]
     kk_files = plan["kk_files"]
     notify(f"[*] 已整理 {len(crash_files)} 个崩溃文件与 "
            f"{len(kk_files)} 个平台日志，共 {plan['total_bytes']} 字节")
+    meta = plan.get("map_meta") or {}
+    if meta.get("name") or meta.get("author"):
+        notify(f"[*] 地图元数据：{meta.get('name') or '未知'}"
+               f" / {meta.get('author') or '作者未知'}")
 
     files = []
     for rel, path in crash_files:
         files.append(("crash", rel, path, _read(path)))
     fields = {"crash_paths": json.dumps(
         [rel for rel, _ in crash_files], ensure_ascii=False)}
+    map_meta = plan.get("map_meta") or {}
+    if map_meta.get("name"):
+        fields["map_name"] = map_meta["name"]
+    if map_meta.get("author"):
+        fields["map_author"] = map_meta["author"]
     if kk_files:
         for rel, path in kk_files:
             files.append(("kk", rel, path, _read(path)))

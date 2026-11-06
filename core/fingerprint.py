@@ -22,6 +22,11 @@ def _module_name(module):
     return (module or "").replace("/", "\\").rsplit("\\", 1)[-1].strip().lower()
 
 
+def _module_label(module):
+    """保留大小写，仅去掉目录部分；Linux 上不能依赖 os.path.basename。"""
+    return (module or "").replace("/", "\\").rsplit("\\", 1)[-1].strip()
+
+
 def _frame_key(frame):
     module = _module_name(frame.get("module"))
     if module in ("", "<unknown>", "unknown"):
@@ -83,7 +88,7 @@ def build_fingerprint(frames, version=None, module_name=None, rva=None,
         "version": version,
         "frames": keys,
         "frame_count": len(keys),
-        "module": module_name,
+        "module": _module_label(module_name) or None,
         "rva": rva,
         "text": f"{signature} · {version} · {' → '.join(keys)}",
     }

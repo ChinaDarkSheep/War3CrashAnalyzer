@@ -7,8 +7,8 @@ import sqlite3
 import sys
 
 from common import (
-    _frame_list, _json_text, _module_from_analysis, normalize_offset,
-    normalize_version)
+    _frame_list, _is_weak_map_name, _json_text, _module_from_analysis,
+    _resolve_map_identity, normalize_offset, normalize_version)
 from db import _upsert_aggregate, rebuild_aggregates
 from legacy_report import analyze_crash, extract_crash_info, extract_map_name
 from upload_store import _upload_map_hash
@@ -56,6 +56,12 @@ def _extract_crash_addr(text):
     return "Unknown"
 
 
+def _module_name(path):
+    """Linux 上 os.path.basename 不会拆分反斜杠路径，这里手动归一化。"""
+    text = (path or "").replace("/", "\\").rsplit("\\", 1)[-1].strip()
+    return text or None
+
+
 def _frame_rva(frame):
     """只有 .text（0001 节）的节内偏移 +0x1000 才能换算成 RVA。"""
     if frame.get('rva') is None:
@@ -84,12 +90,12 @@ def _diagnose_with_core(text):
     if crash_frame and (crash_frame.get('module') or '').lower() not in (
             '<unknown>', 'unknown', ''):
         relative_offset = _frame_rva(crash_frame)
-        module_name = os.path.basename(crash_frame['module'])
+        module_name = _module_name(crash_frame['module'])
     else:
         fallback = first_valid_frame(frames)
         if fallback:
             relative_offset = _frame_rva(fallback)
-            module_name = os.path.basename(fallback['module'])
+            module_name = _module_name(fallback['module'])
             used_fallback = addr != "Unknown"
 
     if relative_offset is None and addr != "Unknown" and not used_fallback:
@@ -99,7 +105,7 @@ def _diagnose_with_core(text):
                 relative_offset = normalize_offset(clean_addr)
                 exe_match = re.search(r'Exe:\s+(.*)', text, re.IGNORECASE)
                 if exe_match:
-                    module_name = os.path.basename(exe_match.group(1).strip())
+                    module_name = _module_name(exe_match.group(1).strip())
         except ValueError:
             pass
 
@@ -209,9 +215,11 @@ def _diagnose_text(text):
 
 
 def _ingest_crash_records(conn, records, code, kk_info, timestamp,
-                          representative_index=0):
+                          representative_index=0, map_meta=None):
     """把每份崩溃记录写入 crash_reports 并累加聚合；返回入库统计。"""
     text_count = sum(1 for record in records if record.get('text'))
+    meta = map_meta or {}
+    kk_map = (kk_info or {}).get('map_name')
     diagnoses = []
     inserted = 0
     duplicates = 0
@@ -225,12 +233,16 @@ def _ingest_crash_records(conn, records, code, kk_info, timestamp,
         diagnosis = _diagnose_text(text)
         diagnoses.append(diagnosis)
 
-        map_name = record.get('map_name')
-        if not map_name or map_name == 'Unknown':
-            map_name = diagnosis.get('map_name')
-        if not map_name or map_name == 'Unknown':
-            map_name = (kk_info or {}).get('map_name') or 'Unknown'
-        map_hash = _upload_map_hash(map_name, kk_info, text_count == 1)
+        crash_map = record.get('map_name')
+        if _is_weak_map_name(crash_map):
+            crash_map = diagnosis.get('map_name') or crash_map
+        map_name, map_author = _resolve_map_identity(
+            crash_map, kk_map, meta.get('name'), meta.get('author'),
+            (kk_info or {}).get('map_hash'))
+        if not map_name:
+            map_name = kk_map or crash_map or 'Unknown'
+        map_hash = _upload_map_hash(
+            map_name, kk_info, text_count == 1, crash_name=crash_map)
 
         content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
         stack = diagnosis.get('stack') or []
@@ -252,6 +264,7 @@ def _ingest_crash_records(conn, records, code, kk_info, timestamp,
             diagnosis.get('fingerprint_version'),
             _frame_list(frames),
             map_hash,
+            map_author,
             _json_text(stack) if stack else None,
             None,
             code,
@@ -262,16 +275,16 @@ def _ingest_crash_records(conn, records, code, kk_info, timestamp,
                                       content_hash, timestamp, analysis_result, module,
                                       relative_offset, game_version, attribution,
                                       confidence, fingerprint, fingerprint_version,
-                                      fingerprint_frames, map_hash, stack, dmp_info,
-                                      upload_code)
-                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                      fingerprint_frames, map_hash, map_author, stack,
+                                      dmp_info, upload_code)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                                   fields)
             inserted += 1
             _upsert_aggregate(
                 conn, cursor.lastrowid, map_hash, map_name,
                 diagnosis.get('fingerprint'), diagnosis.get('version'),
                 diagnosis.get('module'), diagnosis.get('relative_offset'),
-                diagnosis.get('attribution'), timestamp)
+                diagnosis.get('attribution'), timestamp, map_author)
         except sqlite3.IntegrityError:
             duplicates += 1
             conn.execute('''UPDATE crash_reports SET
@@ -284,10 +297,29 @@ def _ingest_crash_records(conn, records, code, kk_info, timestamp,
                              fingerprint_version = COALESCE(fingerprint_version, ?),
                              fingerprint_frames = COALESCE(fingerprint_frames, ?),
                              map_hash = COALESCE(map_hash, ?),
+                             map_author = COALESCE(map_author, ?),
+                             map_name = CASE
+                                 WHEN map_name IS NULL OR map_name = 'Unknown'
+                                   OR lower(map_name) IN ('.w3x', '.w3m', '.w3n')
+                                   OR map_name = 'WorldEdit 测试地图'
+                                 THEN COALESCE(?, map_name) ELSE map_name END,
                              stack = COALESCE(stack, ?),
                              upload_code = COALESCE(upload_code, ?)
                              WHERE content_hash = ?''',
-                          fields[7:17] + (code, content_hash))
+                          (diagnosis.get('module'),
+                           diagnosis.get('relative_offset'),
+                           diagnosis.get('version'),
+                           diagnosis.get('attribution'),
+                           diagnosis.get('confidence'),
+                           diagnosis.get('fingerprint'),
+                           diagnosis.get('fingerprint_version'),
+                           _frame_list(frames),
+                           map_hash,
+                           map_author,
+                           map_name,
+                           _json_text(stack) if stack else None,
+                           code,
+                           content_hash))
             rebuilt = True
 
     if rebuilt:

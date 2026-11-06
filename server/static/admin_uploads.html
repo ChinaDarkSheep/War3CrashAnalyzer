@@ -98,6 +98,13 @@
         .report-item { border: 1px solid #eef1f3; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
         .report-item .analysis { white-space: pre-wrap; font-size: 0.88em; color: #444; margin-top: 6px; }
         .toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+        .feedback-form { background: #f8f9fa; border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+        .feedback-form .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .feedback-form select, .feedback-form textarea {
+            padding: 8px 10px; border: 1px solid #dfe6e9; border-radius: 6px;
+            font-size: 0.9em; font-family: inherit; background: white;
+        }
+        .feedback-form textarea { min-height: 90px; resize: vertical; }
     </style>
 </head>
 <body>
@@ -109,6 +116,7 @@
             <a class="nav-link" href="/author">🧑‍💻 作者查询</a>
             <a class="nav-link" href="/upload">📤 上传日志</a>
             <a class="nav-link" href="/admin/cases">🧩 案例合并</a>
+            <a class="nav-link" href="/admin/download">⬇️ 下载入口</a>
         </header>
 
         <div class="card" id="auth-card">
@@ -145,6 +153,13 @@
                         <option value="1">原始文件可用</option>
                         <option value="0">已到期删除</option>
                     </select>
+                    <select id="feedback-select">
+                        <option value="">反馈：全部</option>
+                        <option value="pending">待处理</option>
+                        <option value="reviewing">复核中</option>
+                        <option value="resolved">已处理</option>
+                        <option value="need_info">需补充材料</option>
+                    </select>
                     <button id="search-btn">查询</button>
                     <button id="refresh-btn" class="ghost">刷新</button>
                     <button id="logout-btn" class="ghost">更换令牌</button>
@@ -165,6 +180,7 @@
                                 <th style="width: 190px;">版本 / 地图</th>
                                 <th style="width: 190px;">崩溃位置</th>
                                 <th style="width: 150px;">归属</th>
+                                <th style="width: 110px;">反馈</th>
                                 <th style="width: 120px;">原始文件</th>
                                 <th style="width: 210px;">操作</th>
                             </tr>
@@ -206,6 +222,12 @@
 
     <script>
         const TOKEN_KEY = 'war3_admin_token';
+        const FEEDBACK_OPTIONS = [
+            ['pending', '待处理'],
+            ['reviewing', '复核中'],
+            ['resolved', '已处理'],
+            ['need_info', '需补充材料']
+        ];
         const state = {
             token: sessionStorage.getItem(TOKEN_KEY) || '',
             limit: 50,
@@ -244,6 +266,22 @@
 
         function confidenceText(value) {
             return value == null ? '' : `<div class="muted">置信度 ${Math.round(Number(value) * 100)}%</div>`;
+        }
+
+        function feedbackOptions(selected) {
+            return FEEDBACK_OPTIONS.map(([value, label]) =>
+                `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`
+            ).join('');
+        }
+
+        function feedbackBadge(feedback) {
+            const info = feedback || {};
+            const status = info.status || 'pending';
+            const cls = status === 'resolved' ? 'badge-success'
+                : status === 'reviewing' ? 'badge-info'
+                : status === 'need_info' ? 'badge-warning' : 'badge-muted';
+            const label = info.label || '待处理';
+            return `<span class="badge ${cls}">${esc(label)}</span>`;
         }
 
         function rawStatus(upload) {
@@ -313,7 +351,7 @@
         function renderRows(items) {
             const tbody = $('upload-rows');
             if (!items.length) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty">没有匹配的上传记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="empty">没有匹配的上传记录</td></tr>';
                 return;
             }
             tbody.innerHTML = items.map((upload) => {
@@ -326,6 +364,8 @@
                 ].join('');
                 const mapLine = upload.map_name
                     ? `<div>${esc(upload.map_name)}</div>` : '<div class="muted">地图未知</div>';
+                const authorLine = upload.map_author
+                    ? `<div class="muted">作者 ${esc(upload.map_author)}</div>` : '';
                 const hashLine = upload.map_hash
                     ? `<div class="muted mono">${esc(upload.map_hash)}</div>` : '';
                 const version = upload.game_version
@@ -341,9 +381,10 @@
                     <td><span class="code-badge">${esc(upload.code)}</span></td>
                     <td>${esc(upload.created_at)}</td>
                     <td>${content}</td>
-                    <td>${version}${mapLine}${hashLine}</td>
+                    <td>${version}${mapLine}${authorLine}${hashLine}</td>
                     <td>${position}${fingerprint}${reports}</td>
                     <td>${attributionBadge(upload.attribution)}${confidenceText(upload.confidence)}</td>
+                    <td>${feedbackBadge(upload.feedback)}</td>
                     <td>${rawStatus(upload)}</td>
                     <td>
                         <button class="small" data-action="detail" data-code="${esc(upload.code)}">详情</button>
@@ -370,11 +411,13 @@
             const attribution = $('attribution-select').value;
             const hasKk = $('kk-select').value;
             const raw = $('raw-select').value;
+            const feedback = $('feedback-select').value;
             if (keyword) params.set('q', keyword);
             if (version) params.set('version', version);
             if (attribution) params.set('attribution', attribution);
             if (hasKk) params.set('has_kk', hasKk);
             if (raw) params.set('raw', raw);
+            if (feedback) params.set('feedback', feedback);
             params.set('limit', String(state.limit));
             params.set('offset', String(state.offset));
 
@@ -463,6 +506,7 @@
                 metaItem('IP 哈希', upload.ip_hash),
                 metaItem('版本', upload.game_version),
                 metaItem('地图', upload.map_name),
+                metaItem('地图作者', upload.map_author),
                 metaItem('地图 MD5', upload.map_hash),
                 metaItem('模块内偏移', upload.module ? `${upload.module}+${upload.relative_offset || ''}` : upload.relative_offset),
                 metaItem('栈指纹', upload.fingerprint),
@@ -472,6 +516,21 @@
                 metaItem('KK 会话', upload.kk_session),
                 metaItem('入库报告数', upload.report_count == null ? '未入库' : String(upload.report_count))
             ].join('');
+
+            const feedback = upload.feedback || { status: 'pending', label: '待处理', note: '' };
+            const feedbackForm = `
+                <h3>维护者反馈</h3>
+                <div class="feedback-form">
+                    <div class="row">
+                        <select id="feedback-status-input">${feedbackOptions(feedback.status)}</select>
+                        <button class="small" id="feedback-save-btn">保存反馈</button>
+                        <span class="muted">${feedback.updated_at
+                            ? '最近更新 ' + esc(feedback.updated_at)
+                            : '尚未反馈'}</span>
+                    </div>
+                    <textarea id="feedback-note-input" maxlength="500"
+                        placeholder="可选：给提交者的复核结论或需补充的材料（会显示在上传码查询页）">${esc(feedback.note || '')}</textarea>
+                </div>`;
 
             const fileRows = files.length ? files.map((file) => {
                 const binary = /\.(dmp|mdmp|bin)$/i.test(file.path);
@@ -504,6 +563,7 @@
             )).join('') : '<p class="muted">暂无操作记录</p>';
 
             return `${meta}
+                ${feedbackForm}
                 <h3>崩溃报告（服务端诊断）</h3>
                 ${reportRows}
                 <div class="toolbar" style="margin-top: 10px;">
@@ -575,6 +635,28 @@
                 setTimeout(() => URL.revokeObjectURL(url), 5000);
             } catch (error) {
                 toast(`下载失败：${error.message}`, true);
+            }
+        }
+
+        async function saveFeedback(code) {
+            const status = $('feedback-status-input').value;
+            const note = $('feedback-note-input').value.trim();
+            const button = $('feedback-save-btn');
+            button.disabled = true;
+            button.textContent = '保存中…';
+            try {
+                const data = await api(`/api/admin/uploads/${code}/feedback`, {
+                    method: 'POST',
+                    headers: headers({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ status: status, note: note })
+                });
+                toast(`已保存反馈：${data.feedback.label}`);
+                await openDetail(code);
+                await loadList();
+            } catch (error) {
+                toast(`保存反馈失败：${error.message}`, true);
+                button.disabled = false;
+                button.textContent = '保存反馈';
             }
         }
 
@@ -678,6 +760,10 @@
             }
             if (event.target.id === 'reingest-btn') {
                 reingest(state.detailCode);
+                return;
+            }
+            if (event.target.id === 'feedback-save-btn') {
+                saveFeedback(state.detailCode);
             }
         });
 

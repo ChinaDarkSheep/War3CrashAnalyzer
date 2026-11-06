@@ -11,12 +11,16 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, send_file
 
+from common import _parse_json, _resolve_map_identity
 from db import DB_PATH
 from diagnosis import _ingest_crash_records
+from download_store import DownloadConfigError, get_download, save_download
 from settings import (
     ADMIN_PAGE_SIZE_MAX,
     ADMIN_PREVIEW_BYTES,
     ADMIN_TOKEN,
+    FEEDBACK_NOTE_MAX,
+    FEEDBACK_STATUSES,
     UPLOAD_ROOT,
 )
 from upload_store import (
@@ -134,6 +138,10 @@ def admin_upload_list():
     if attribution:
         where.append("attribution = ?")
         params.append(attribution)
+    feedback = (request.args.get('feedback') or '').strip()
+    if feedback in FEEDBACK_STATUSES:
+        where.append("COALESCE(feedback_status, 'pending') = ?")
+        params.append(feedback)
     has_kk = request.args.get('has_kk')
     if has_kk in ('0', '1'):
         where.append("has_kk = ?")
@@ -188,8 +196,9 @@ def admin_upload_detail(code):
     conn.row_factory = sqlite3.Row
     try:
         reports = conn.execute(
-            "SELECT id, map_name, map_hash, game_version, module, relative_offset, "
-            "attribution, confidence, fingerprint, timestamp, analysis_result, stack "
+            "SELECT id, map_name, map_author, map_hash, game_version, module, "
+            "relative_offset, attribution, confidence, fingerprint, timestamp, "
+            "analysis_result, stack "
             "FROM crash_reports WHERE upload_code = ? ORDER BY id",
             (row['code'],)).fetchall()
         audits = conn.execute(
@@ -295,6 +304,99 @@ def admin_upload_archive(code):
         download_name=f'war3-upload-{row["code"]}.zip')
 
 
+@bp.route('/api/admin/uploads/<code>/feedback', methods=['POST'])
+def admin_upload_feedback(code):
+    """维护者反馈：状态与备注会随上传码公开给提交者。"""
+    denied = _admin_denied()
+    if denied:
+        return denied
+    row = _admin_upload_row(code)
+    if row is None:
+        return jsonify({"error": "not_found", "message": "上传码不存在"}), 404
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "invalid_body",
+            "message": "请求体必须是 JSON 对象",
+        }), 400
+    status = (data.get('status') or '').strip()
+    note = (data.get('note') or '').strip()
+    if status not in FEEDBACK_STATUSES:
+        return jsonify({
+            "error": "invalid_status",
+            "message": "反馈状态无效",
+            "allowed": list(FEEDBACK_STATUSES),
+        }), 400
+    if len(note) > FEEDBACK_NOTE_MAX:
+        return jsonify({
+            "error": "note_too_long",
+            "message": f"反馈备注不能超过 {FEEDBACK_NOTE_MAX} 字",
+        }), 400
+
+    feedback_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE raw_uploads SET feedback_status = ?, feedback_note = ?, "
+            "feedback_at = ? WHERE code = ?",
+            (status, note or None, feedback_at, row['code']))
+        conn.commit()
+    finally:
+        conn.close()
+
+    label = FEEDBACK_STATUSES[status]
+    _audit('feedback', row['code'], f"{label}: {note[:200]}")
+    return jsonify({
+        'status': 'ok',
+        'code': row['code'],
+        'feedback': {
+            'status': status,
+            'label': label,
+            'note': note,
+            'updated_at': feedback_at,
+        },
+    })
+
+
+@bp.route('/api/admin/download', methods=['GET'])
+def admin_download_get():
+    denied = _admin_denied()
+    if denied:
+        return denied
+    return jsonify(get_download())
+
+
+@bp.route('/api/admin/download', methods=['POST'])
+def admin_download_save():
+    """更新客户端下载入口；链接留空即下线。"""
+    denied = _admin_denied()
+    if denied:
+        return denied
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "invalid_body",
+            "message": "请求体必须是 JSON 对象",
+        }), 400
+    try:
+        payload = save_download(
+            version=data.get('version'),
+            url=data.get('url'),
+            extract_code=data.get('extract_code'),
+            note=data.get('note'))
+    except DownloadConfigError as exc:
+        return jsonify({"error": exc.code, "message": exc.message}), 400
+
+    if payload['configured']:
+        detail = f"{payload['version']}: {payload['url']}" \
+            if payload['version'] else payload['url']
+    else:
+        detail = '已下线下载入口'
+    _audit('download_update', None, detail)
+    return jsonify({'status': 'ok', 'download': payload})
+
+
 @bp.route('/api/admin/uploads/<code>/delete', methods=['POST'])
 def admin_upload_delete(code):
     denied = _admin_denied()
@@ -355,21 +457,32 @@ def admin_upload_reingest(code):
 
     representative_index = _representative_index(crash_records)
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    summary = _parse_json(row['summary']) or {}
+    map_meta = summary.get('map_meta') if isinstance(summary, dict) else None
+    if not isinstance(map_meta, dict):
+        map_meta = {}
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         outcome = _ingest_crash_records(
             conn, crash_records, row['code'], kk_info, timestamp,
-            representative_index)
+            representative_index, map_meta)
         diagnosis = outcome.get('representative')
         if diagnosis:
+            map_name, map_author = _resolve_map_identity(
+                row['map_name'], (kk_info or {}).get('map_name'),
+                map_meta.get('name'), map_meta.get('author'),
+                (kk_info or {}).get('map_hash'))
+            if not map_name:
+                map_name = diagnosis.get('map_name')
             conn.execute('''UPDATE raw_uploads SET
                             fingerprint = COALESCE(?, fingerprint),
                             attribution = COALESCE(?, attribution),
                             confidence = COALESCE(?, confidence),
                             report_count = ?,
                             game_version = COALESCE(game_version, ?),
-                            map_name = COALESCE(map_name, ?),
+                            map_name = COALESCE(?, map_name),
+                            map_author = COALESCE(map_author, ?),
                             map_hash = COALESCE(map_hash, ?),
                             crash_module = COALESCE(crash_module, ?),
                             relative_offset = COALESCE(relative_offset, ?),
@@ -380,10 +493,10 @@ def admin_upload_reingest(code):
                           diagnosis.get('confidence'),
                           outcome['inserted'] + outcome['duplicates'],
                           diagnosis.get('version'),
-                          diagnosis.get('map_name'),
-                          _upload_map_hash(
-                              diagnosis.get('map_name') or row['map_name'],
-                              kk_info, True),
+                          map_name,
+                          map_author,
+                          _upload_map_hash(map_name or row['map_name'], kk_info, True,
+                                           crash_name=row['map_name']),
                           diagnosis.get('module'),
                           diagnosis.get('relative_offset'),
                           diagnosis.get('analysis'),

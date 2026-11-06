@@ -6,9 +6,9 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from common import (
-    _attribution, _clean_dmp, _confidence, _fingerprint, _frame_list,
-    _map_hash, _module, _stack_list, _text, get_content_hash, normalize_offset,
-    normalize_version)
+    _attribution, _clean_dmp, _clean_map_field, _confidence, _fingerprint,
+    _frame_list, _map_hash, _module, _public_map_name, _public_text,
+    _stack_list, _text, get_content_hash, normalize_offset, normalize_version)
 from db import DB_PATH, _upsert_aggregate, rebuild_aggregates
 from legacy_report import analyze_crash, extract_crash_info, extract_map_name
 
@@ -142,12 +142,17 @@ def get_stats():
     where_clause = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
     # Top crashing maps
-    c.execute("SELECT map_name, COUNT(*) as count FROM crash_reports GROUP BY map_name ORDER BY count DESC LIMIT 5")
-    top_maps = [dict(row) for row in c.fetchall()]
+    c.execute("SELECT map_name, MAX(map_author) as map_author, COUNT(*) as count "
+              "FROM crash_reports GROUP BY map_name ORDER BY count DESC LIMIT 5")
+    top_maps = [{'map_name': _public_map_name(row['map_name']),
+                 'map_author': _clean_map_field(
+                     row['map_author'], 80, strip_path=False),
+                 'count': row['count']} for row in c.fetchall()]
 
     # Common crash reasons (based on analysis_result)
     c.execute(f"SELECT analysis_result as reason, COUNT(*) as count FROM crash_reports {where_clause} GROUP BY analysis_result ORDER BY count DESC LIMIT 5", params)
-    top_reasons = [dict(row) for row in c.fetchall()]
+    top_reasons = [{'reason': _public_text(row['reason']),
+                    'count': row['count']} for row in c.fetchall()]
 
     # Total count
     c.execute(f"SELECT COUNT(*) FROM crash_reports {where_clause}", params)
@@ -172,11 +177,18 @@ def get_stats():
                          "OR module LIKE ? OR annotation LIKE ?)")
         agg_params.extend([f"%{search_query}%"] * 4)
     agg_clause = " WHERE " + " AND ".join(agg_where) if agg_where else ""
-    c.execute(f"SELECT signature, map_hash, map_name, fingerprint, game_version, "
-              f"module, relative_offset, attribution, occurrence, annotation, "
-              f"last_seen FROM crash_aggregates{agg_clause} "
+    c.execute(f"SELECT signature, map_hash, map_name, map_author, fingerprint, "
+              f"game_version, module, relative_offset, attribution, occurrence, "
+              f"annotation, last_seen FROM crash_aggregates{agg_clause} "
               f"ORDER BY occurrence DESC, last_seen DESC LIMIT 10", agg_params)
-    top_fingerprints = [dict(row) for row in c.fetchall()]
+    top_fingerprints = []
+    for row in c.fetchall():
+        item = dict(row)
+        item['module'] = _module(item.get('module'))
+        item['map_name'] = _public_map_name(item.get('map_name'))
+        item['map_author'] = _clean_map_field(
+            item.get('map_author'), 80, strip_path=False)
+        top_fingerprints.append(item)
 
     conn.close()
     return jsonify({
@@ -197,9 +209,9 @@ def get_crashes():
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
-    query = ("SELECT id, map_name, map_hash, crash_address, module, relative_offset, "
-             "game_version, attribution, confidence, fingerprint, fingerprint_version, "
-             "analysis_result, timestamp FROM crash_reports")
+    query = ("SELECT id, map_name, map_author, map_hash, crash_address, module, "
+             "relative_offset, game_version, attribution, confidence, fingerprint, "
+             "fingerprint_version, analysis_result, timestamp FROM crash_reports")
     where_clauses = []
     params = []
     if map_filter:
@@ -215,6 +227,14 @@ def get_crashes():
     query += " ORDER BY timestamp DESC LIMIT 20"
 
     c.execute(query, params)
-    crashes = [dict(row) for row in c.fetchall()]
+    crashes = []
+    for row in c.fetchall():
+        item = dict(row)
+        item['module'] = _module(item.get('module'))
+        item['map_name'] = _public_map_name(item.get('map_name'))
+        item['map_author'] = _clean_map_field(
+            item.get('map_author'), 80, strip_path=False)
+        item['analysis_result'] = _public_text(item.get('analysis_result'))
+        crashes.append(item)
     conn.close()
     return jsonify(crashes)

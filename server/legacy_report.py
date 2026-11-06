@@ -46,16 +46,21 @@ def extract_map_name(log_content):
     Extract map name from log content
     """
     map_name = "Unknown"
-    map_match = re.search(r'Played Maps\\(.*?)\.(?:w3x|w3m|w3n)', log_content, re.IGNORECASE)
+    map_match = re.search(
+        r'Played Maps\\(.*?)\.(w3x|w3m|w3n)', log_content, re.IGNORECASE)
     if map_match:
-        full_name = map_match.group(1)
-        suffix_match = re.search(r'\.(w3x|w3m|w3n)', log_content[map_match.start():map_match.end()], re.IGNORECASE)
-        suffix = suffix_match.group(1) if suffix_match else "w3x"
-
-        if '\\' in full_name:
-            map_name = full_name.split('\\')[-1] + "." + suffix
+        full_name = map_match.group(1).rstrip('\\')
+        suffix = map_match.group(2).lower()
+        base = full_name.split('\\')[-1].strip()
+        # 编辑器测试地图没有真实地图名：Played Maps\Test\... 或 WorldEditTestMap.w3x
+        editor_test = (
+            full_name.lower() == "test"
+            or full_name.lower().startswith("test\\")
+            or base.lower() in ("worldedittestmap", "test"))
+        if editor_test or not base:
+            map_name = "WorldEdit 测试地图"
         else:
-            map_name = full_name + "." + suffix
+            map_name = base + "." + suffix
 
     if map_name == "Unknown" or map_name == ".w3m" or map_name == ".w3x":
         alt_match = re.search(r'([^\\]+\.(?:w3x|w3m|w3n))', log_content, re.IGNORECASE)

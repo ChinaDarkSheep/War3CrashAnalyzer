@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⬇️ 下载入口管理 - 魔兽崩溃分析</title>
+    <style>
+        :root {
+            --primary: #3498db;
+            --dark: #2c3e50;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f1c40f;
+            --bg: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #34495e 100%);
+            color: white; padding: 30px; border-radius: 12px; margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+        }
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0 0 15px; color: #dbe7f3; }
+        .nav-link {
+            display: inline-block; color: white; text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 6px;
+            padding: 8px 16px; font-size: 0.9em; margin: 0 4px;
+        }
+        .nav-link:hover { background: rgba(255,255,255,0.15); }
+        .card {
+            background: var(--card-bg); padding: 25px; border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+        }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; margin-top: 0; font-size: 1.25rem; margin-bottom: 18px; }
+        .muted { color: #888; font-size: 0.88em; }
+        .field { margin-bottom: 16px; }
+        .field label { display: block; font-size: 0.9em; color: #555; margin-bottom: 6px; font-weight: 600; }
+        .field input, .field textarea {
+            width: 100%; padding: 10px 12px; border: 1px solid #dfe6e9;
+            border-radius: 6px; outline: none; font-size: 0.95em;
+            font-family: inherit; background: white;
+        }
+        .field input:focus, .field textarea:focus { border-color: var(--primary); }
+        .field textarea { resize: vertical; min-height: 130px; }
+        .field .hint { color: #888; font-size: 0.8em; margin-top: 5px; }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
+        .counter { float: right; color: #999; font-weight: normal; font-size: 0.9em; }
+        .query-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .query-row input[type="password"] { padding: 9px 12px; border: 1px solid #dfe6e9; border-radius: 6px; outline: none; min-width: 300px; }
+        .query-row input:focus { border-color: var(--primary); }
+        button {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; font-size: 0.92em;
+        }
+        button:disabled { background: #b2bec3; cursor: not-allowed; }
+        button.ghost { background: white; color: #636e72; border: 1px solid #dfe6e9; }
+        button.danger { background: var(--danger); }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .alert { display: none; margin-top: 12px; padding: 12px 14px; border-radius: 6px; font-size: 0.9em; background: #e0f2fe; color: #0369a1; line-height: 1.65; }
+        .alert.show { display: block; }
+        .alert.error { background: #fee2e2; color: #b91c1c; }
+        .badge { padding: 3px 10px; border-radius: 6px; font-size: 0.78em; font-weight: bold; white-space: nowrap; }
+        .badge-success { background-color: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
+        .badge-muted { background-color: #f1f2f6; color: #636e72; border: 1px solid #dfe6e9; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 12px; }
+        .meta-item { background: #f8f9fa; border-radius: 8px; padding: 10px 13px; }
+        .meta-item .label { color: #888; font-size: 0.76em; margin-bottom: 4px; }
+        .meta-item .value { font-weight: 600; word-break: break-all; font-size: 0.9em; }
+        .link-line { word-break: break-all; }
+        .link-line a { color: var(--primary); text-decoration: none; }
+        .link-line a:hover { text-decoration: underline; }
+        .empty { color: #999; padding: 10px 0; }
+        pre.note-preview { margin: 8px 0 0; padding: 12px; background: #f8f9fa; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 0.9em; line-height: 1.7; color: #444; }
+        #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+        .toast-item { background: #2c3e50; color: white; padding: 10px 18px; border-radius: 8px; font-size: 0.9em; box-shadow: 0 6px 18px rgba(0,0,0,0.2); opacity: 0; transition: opacity 0.25s; max-width: 90vw; }
+        .toast-item.error { background: #b91c1c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⬇️ 下载入口管理</h1>
+            <p>仅维护者可见：随时更新公开下载页的网盘链接</p>
+            <a class="nav-link" href="/">← 返回总览</a>
+            <a class="nav-link" href="/download" target="_blank" rel="noopener noreferrer">⬇️ 公开下载页</a>
+            <a class="nav-link" href="/admin/uploads">📁 上传管理</a>
+            <a class="nav-link" href="/admin/cases">🧩 案例复核</a>
+        </header>
+
+        <div class="card" id="auth-card">
+            <h2>管理令牌</h2>
+            <div class="query-row">
+                <input type="password" id="token-input" placeholder="WAR3_ADMIN_TOKEN" autocomplete="off">
+                <button id="token-btn">进入管理</button>
+                <button id="token-clear" class="ghost">清除令牌</button>
+            </div>
+            <p class="muted">令牌只保存在当前浏览器的 sessionStorage。服务端未设置 WAR3_ADMIN_TOKEN 时返回 503。</p>
+            <div class="alert" id="auth-alert"></div>
+        </div>
+
+        <div id="main" hidden>
+            <div class="card">
+                <h2>当前生效配置</h2>
+                <div id="preview"></div>
+            </div>
+
+            <div class="card">
+                <h2>更新下载链接</h2>
+                <div class="field">
+                    <label for="version-input">版本号</label>
+                    <input type="text" id="version-input" maxlength="40" placeholder="如 1.0.0（可留空）">
+                </div>
+                <div class="field">
+                    <label for="url-input">网盘链接</label>
+                    <input type="url" id="url-input" maxlength="2000" placeholder="https://pan.baidu.com/s/...">
+                    <div class="hint">必须是 http/https 地址；留空保存即下线下载入口。</div>
+                </div>
+                <div class="field">
+                    <label for="code-input">提取码</label>
+                    <input type="text" id="code-input" maxlength="32" placeholder="可留空">
+                </div>
+                <div class="field">
+                    <label for="note-input">更新说明 <span class="counter" id="note-counter">0 / 2000</span></label>
+                    <textarea id="note-input" maxlength="2000" placeholder="本次更新内容、适用版本、注意事项…（可留空）"></textarea>
+                </div>
+                <div class="toolbar">
+                    <button id="save-btn">保存并立即生效</button>
+                    <button id="reset-btn" class="ghost">恢复当前值</button>
+                    <button id="logout-btn" class="ghost">更换令牌</button>
+                    <button id="unpublish-btn" class="danger">下线下载入口</button>
+                </div>
+                <div class="alert" id="save-alert"></div>
+                <p class="muted" style="margin-bottom:0;">保存后公开页刷新即生效，无需重启服务；每次更新都会写入 admin_audit。</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const TOKEN_KEY = 'war3_admin_token';
+        const state = { token: sessionStorage.getItem(TOKEN_KEY) || '', current: null };
+
+        const $ = (id) => document.getElementById(id);
+
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function showAlert(id, message, isError) {
+            const box = $(id);
+            box.textContent = message || '';
+            box.className = 'alert' + (message ? ' show' : '') + (isError ? ' error' : '');
+        }
+
+        function toast(message, isError) {
+            const item = document.createElement('div');
+            item.className = 'toast-item' + (isError ? ' error' : '');
+            item.textContent = message;
+            $('toast').appendChild(item);
+            requestAnimationFrame(() => { item.style.opacity = '1'; });
+            setTimeout(() => {
+                item.style.opacity = '0';
+                setTimeout(() => item.remove(), 260);
+            }, 3600);
+        }
+
+        async function api(path, options) {
+            const opts = Object.assign({}, options || {});
+            opts.headers = Object.assign({ 'X-Admin-Token': state.token }, opts.headers || {});
+            const response = await fetch(path, opts);
+            let data = null;
+            try { data = await response.json(); } catch (err) { data = null; }
+            if (!response.ok) {
+                const error = new Error((data && data.message) || `请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        }
+
+        function fillForm(data) {
+            $('version-input').value = data.version || '';
+            $('url-input').value = data.url || '';
+            $('code-input').value = data.extract_code || '';
+            $('note-input').value = data.note || '';
+            updateCounter();
+        }
+
+        function updateCounter() {
+            $('note-counter').textContent = `${$('note-input').value.length} / 2000`;
+        }
+
+        function renderPreview(data) {
+            const box = $('preview');
+            if (!data.configured) {
+                box.innerHTML = '<span class="badge badge-muted">未配置</span>'
+                    + '<p class="empty">公开下载页当前显示“尚未配置下载链接”。</p>';
+                return;
+            }
+            const codeLine = data.extract_code
+                ? `<div class="meta-item"><div class="label">提取码</div><div class="value">${esc(data.extract_code)}</div></div>`
+                : '<div class="meta-item"><div class="label">提取码</div><div class="value">—</div></div>';
+            const noteLine = data.note
+                ? `<div class="label muted">更新说明</div><pre class="note-preview">${esc(data.note)}</pre>`
+                : '<p class="muted">无更新说明</p>';
+            box.innerHTML = `
+                <div class="meta-grid">
+                    <div class="meta-item"><div class="label">状态</div><div class="value"><span class="badge badge-success">已上线</span></div></div>
+                    <div class="meta-item"><div class="label">版本号</div><div class="value">${esc(data.version || '未填写')}</div></div>
+                    <div class="meta-item"><div class="label">最近更新</div><div class="value">${esc(data.updated_at || '—')}</div></div>
+                    ${codeLine}
+                </div>
+                <div class="meta-item" style="margin-bottom: 12px;">
+                    <div class="label">网盘链接</div>
+                    <div class="value link-line"><a id="preview-link" target="_blank" rel="noopener noreferrer"></a></div>
+                </div>
+                ${noteLine}`;
+            const link = $('preview-link');
+            link.href = data.url;
+            link.textContent = data.url;
+        }
+
+        function apply(data) {
+            state.current = data;
+            renderPreview(data);
+            fillForm(data);
+        }
+
+        async function load() {
+            showAlert('save-alert', '');
+            try {
+                const data = await api('/api/admin/download');
+                apply(data);
+                $('auth-card').hidden = true;
+                $('main').hidden = false;
+                showAlert('auth-alert', '');
+            } catch (error) {
+                if (error.status === 403 || error.status === 503) {
+                    $('main').hidden = true;
+                    $('auth-card').hidden = false;
+                    showAlert('auth-alert', error.message, true);
+                } else {
+                    showAlert('save-alert', `读取失败：${error.message}`, true);
+                }
+            }
+        }
+
+        async function save(url) {
+            const payload = {
+                version: $('version-input').value.trim(),
+                url,
+                extract_code: $('code-input').value.trim(),
+                note: $('note-input').value.trim()
+            };
+            $('save-btn').disabled = true;
+            $('unpublish-btn').disabled = true;
+            try {
+                const data = await api('/api/admin/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                apply(data.download);
+                showAlert('save-alert', data.download.configured
+                    ? '已保存，公开页刷新后立即生效。'
+                    : '已下线，公开页刷新后不再显示下载入口。');
+                toast(data.download.configured ? '下载链接已更新' : '下载入口已下线');
+            } catch (error) {
+                showAlert('save-alert', `保存失败：${error.message}`, true);
+                toast(`保存失败：${error.message}`, true);
+            } finally {
+                $('save-btn').disabled = false;
+                $('unpublish-btn').disabled = false;
+            }
+        }
+
+        $('token-btn').addEventListener('click', async () => {
+            const value = $('token-input').value.trim();
+            if (!value) {
+                showAlert('auth-alert', '请先填写管理令牌', true);
+                return;
+            }
+            state.token = value;
+            sessionStorage.setItem(TOKEN_KEY, value);
+            await load();
+        });
+
+        $('token-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') $('token-btn').click();
+        });
+
+        $('token-clear').addEventListener('click', () => {
+            sessionStorage.removeItem(TOKEN_KEY);
+            state.token = '';
+            $('token-input').value = '';
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            showAlert('auth-alert', '令牌已清除', false);
+        });
+
+        $('logout-btn').addEventListener('click', () => {
+            $('main').hidden = true;
+            $('auth-card').hidden = false;
+            $('token-input').value = state.token;
+        });
+
+        $('save-btn').addEventListener('click', () => {
+            const url = $('url-input').value.trim();
+            if (!url) {
+                toast('链接为空，请使用“下线下载入口”', true);
+                return;
+            }
+            save(url);
+        });
+
+        $('reset-btn').addEventListener('click', () => {
+            if (state.current) {
+                fillForm(state.current);
+                toast('已恢复为当前生效配置');
+            }
+        });
+
+        $('unpublish-btn').addEventListener('click', () => {
+            if (!window.confirm('确定下线下载入口？公开下载页将显示“尚未配置下载链接”。')) {
+                return;
+            }
+            save('');
+        });
+
+        $('note-input').addEventListener('input', updateCounter);
+
+        if (state.token) {
+            $('token-input').value = state.token;
+            load();
+        }
+    </script>
+</body>
+</html>

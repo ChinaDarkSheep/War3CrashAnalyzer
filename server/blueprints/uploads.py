@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
-from common import _module_from_analysis
-from db import DB_PATH
+from common import _module_from_analysis, _resolve_map_identity
+from db import DB_PATH, rebuild_aggregates
 from diagnosis import _ingest_crash_records
 from settings import RAW_RETENTION_DAYS, UPLOAD_RATE_PER_HOUR, UPLOAD_ROOT
 from upload_store import (
@@ -23,6 +23,7 @@ from upload_store import (
     _public_upload,
     _rate_limited,
     _representative_index,
+    _request_map_meta,
     _request_zone_items,
     _tree_digest,
     _upload_map_hash,
@@ -38,6 +39,63 @@ def upload_too_large(_):
         "error": "too_large",
         "message": "单次上传上限为 50 MB，请只保留崩溃发生前后的日志",
     }), 413
+
+
+def _enrich_duplicate(conn, row, kk_info, map_meta, crash_records):
+    """相同日志再次上传时，把新带的地图名/作者补进旧记录。"""
+    if not map_meta:
+        return row
+    kk_map = (kk_info or {}).get('map_name')
+    kk_hash = (kk_info or {}).get('map_hash')
+    name, author = _resolve_map_identity(
+        row['map_name'], kk_map, map_meta.get('name'), map_meta.get('author'),
+        kk_hash)
+    if not name:
+        return row
+
+    summary = {}
+    if row['summary']:
+        try:
+            summary = json.loads(row['summary'])
+        except (TypeError, ValueError):
+            summary = {}
+    if not isinstance(summary, dict):
+        summary = {}
+    summary['map_meta'] = map_meta
+
+    allow_unknown = sum(1 for record in crash_records
+                        if record.get('text')) == 1
+    map_hash = _upload_map_hash(
+        name, kk_info, allow_unknown, row['map_name']) or row['map_hash']
+    conn.execute('''UPDATE raw_uploads SET
+                    map_name = ?, map_author = COALESCE(map_author, ?),
+                    map_hash = COALESCE(map_hash, ?), summary = ?
+                    WHERE code = ?''',
+                 (name, author, map_hash,
+                  json.dumps(summary, ensure_ascii=False), row['code']))
+
+    changed = False
+    reports = conn.execute(
+        "SELECT id, map_name, map_author FROM crash_reports WHERE upload_code = ?",
+        (row['code'],)).fetchall()
+    for report in reports:
+        report_name, report_author = _resolve_map_identity(
+            report['map_name'], kk_map,
+            map_meta.get('name'), map_meta.get('author'), kk_hash)
+        if not report_name:
+            continue
+        if (report_name != report['map_name']
+                or (report_author and not report['map_author'])):
+            conn.execute(
+                "UPDATE crash_reports SET map_name = ?, "
+                "map_author = COALESCE(map_author, ?) WHERE id = ?",
+                (report_name, report_author, report['id']))
+            changed = True
+    if changed:
+        rebuild_aggregates(conn)
+    conn.commit()
+    return conn.execute(
+        "SELECT * FROM raw_uploads WHERE code = ?", (row['code'],)).fetchone()
 
 
 @bp.route('/api/upload', methods=['POST'])
@@ -71,6 +129,7 @@ def upload_logs():
 
         crash_records = _parse_crash_zone(os.path.join(temp_root, 'crash')) if crash_items else []
         kk_info = _parse_kk_zone(os.path.join(temp_root, 'kk')) if kk_items else None
+        map_meta = _request_map_meta()
 
         content_hash, stored_files = _tree_digest(temp_root)
         if stored_files == 0:
@@ -85,6 +144,11 @@ def upload_logs():
                 (content_hash,)).fetchone()
             if duplicate is not None:
                 shutil.rmtree(temp_root, ignore_errors=True)
+                try:
+                    duplicate = _enrich_duplicate(
+                        conn, duplicate, kk_info, map_meta, crash_records)
+                except Exception as exc:
+                    print(f"[!] 重复上传补全地图信息失败: {exc}")
                 payload = _public_upload(duplicate)
                 payload.update({"status": "duplicate", "duplicate": True})
                 return jsonify(payload)
@@ -93,13 +157,18 @@ def upload_logs():
             representative = (crash_records[representative_index]
                               if representative_index >= 0 else {})
             version = representative.get('game_version') or (kk_info or {}).get('game_version')
-            map_name = representative.get('map_name')
-            if not map_name or map_name == 'Unknown':
-                map_name = (kk_info or {}).get('map_name')
+            kk_map = (kk_info or {}).get('map_name')
+            map_name, map_author = _resolve_map_identity(
+                representative.get('map_name'), kk_map,
+                (map_meta or {}).get('name'), (map_meta or {}).get('author'),
+                (kk_info or {}).get('map_hash'))
+            if not map_name:
+                map_name = kk_map or representative.get('map_name') or 'Unknown'
             map_hash = _upload_map_hash(
                 map_name, kk_info,
                 allow_unknown=sum(1 for record in crash_records
-                                  if record.get('text')) == 1)
+                                  if record.get('text')) == 1,
+                crash_name=representative.get('map_name'))
             relative_offset = representative.get('relative_offset')
             analysis = representative.get('analysis')
             crash_module = _module_from_analysis(analysis)
@@ -119,6 +188,8 @@ def upload_logs():
                 } if kk_info else None,
                 'stored_files': stored_files,
             }
+            if map_meta:
+                summary['map_meta'] = map_meta
 
             created = datetime.now()
             expires = created + timedelta(days=RAW_RETENTION_DAYS)
@@ -138,14 +209,14 @@ def upload_logs():
                 conn.execute('''INSERT INTO raw_uploads
                                 (code, created_at, expires_at, content_hash, ip_hash,
                                  file_count, total_bytes, has_crash, has_kk,
-                                 game_version, map_name, map_hash, crash_module,
-                                 relative_offset, analysis, kk_session, summary,
-                                 raw_deleted_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)''',
+                                 game_version, map_name, map_author, map_hash,
+                                 crash_module, relative_offset, analysis, kk_session,
+                                 summary, raw_deleted_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)''',
                              (code, created_text, expires_text, content_hash, ip_hash,
                               stored_files, state['total_bytes'], int(bool(crash_records)),
-                              int(bool(kk_info)), version, map_name, map_hash,
-                              crash_module, relative_offset, analysis,
+                              int(bool(kk_info)), version, map_name, map_author,
+                              map_hash, crash_module, relative_offset, analysis,
                               (kk_info or {}).get('session'),
                               json.dumps(summary, ensure_ascii=False)))
             except Exception:
@@ -157,7 +228,7 @@ def upload_logs():
                 conn.execute('SAVEPOINT ingest')
                 outcome = _ingest_crash_records(
                     conn, crash_records, code, kk_info, created_text,
-                    representative_index)
+                    representative_index, map_meta)
                 if summary.get('crash') is not None:
                     summary['crash']['with_offset'] = outcome['with_offset']
                     conn.execute(
@@ -170,7 +241,7 @@ def upload_logs():
                         diagnosed_map = None
                     conn.execute('''UPDATE raw_uploads SET
                                     game_version = COALESCE(?, game_version),
-                                    map_name = COALESCE(?, map_name),
+                                    map_name = COALESCE(map_name, ?),
                                     map_hash = COALESCE(?, map_hash),
                                     crash_module = COALESCE(?, crash_module),
                                     relative_offset = COALESCE(?, relative_offset),

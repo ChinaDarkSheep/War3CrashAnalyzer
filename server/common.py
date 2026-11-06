@@ -48,6 +48,115 @@ def _text(value, limit):
 
 ATTRIBUTIONS = {"地图", "本机环境或对战平台", "编辑器", "暂无法确定"}
 
+_EMPTY_MAP_NAMES = {
+    "", "unknown", "<unknown>", ".w3x", ".w3m", ".w3n",
+    "worldedit 测试地图", "worldedit test map",
+}
+_MAP_EXT = re.compile(r'\.(?:w3x|w3m|w3n)$', re.IGNORECASE)
+_MAP_VERSION_SUFFIX = re.compile(r'[\s_\-]+v?\d+(?:[._]\d+)*[a-z]?\s*$', re.IGNORECASE)
+_MAP_CONTROL = re.compile(r'[\x00-\x1f\x7f]+')
+_TRIGSTR = re.compile(r'^trigstr_\d+$', re.IGNORECASE)
+_MAP_HASH_NAME = re.compile(
+    r'^([0-9A-Fa-f]{32})(?:\.(?:w3x|w3m|w3n))?$', re.IGNORECASE)
+_WIN_ABS_PATH = re.compile(
+    r'(?i)\b[A-Za-z]:\\(?:[^\\\s"<>|*?：，。；、]+\\)*'
+    r'[^\\\s"<>|*?：，。；、]+')
+
+
+def _public_map_name(value):
+    """公开页展示用：旧数据里的 ``.w3m`` 视为 WorldEdit 测试地图。"""
+    text = _text(value, 160)
+    if not text or text.lower() in _EMPTY_MAP_NAMES:
+        if text and text.startswith('.'):
+            return "WorldEdit 测试地图"
+        return None
+    return text
+
+
+def _clean_map_field(value, limit=120, strip_path=True):
+    """地图名/作者来自客户端或旧日志：去掉路径、控制字符与占位值。
+
+    地图名允许从旧日志的绝对路径里取文件名；作者名一旦带路径就视为无效，
+    避免把 ``C:\\Users\\...`` 截成 ``secret.txt`` 展示出去。
+    """
+    text = _text(value, limit * 2)
+    if not text:
+        return None
+    if strip_path:
+        text = text.replace('/', '\\').rsplit('\\', 1)[-1]
+    elif '/' in text or '\\' in text:
+        return None
+    text = _MAP_CONTROL.sub(' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text or text.lower() in _EMPTY_MAP_NAMES or _TRIGSTR.match(text):
+        return None
+    return text[:limit]
+
+
+def _is_weak_map_name(value):
+    return (value or '').strip().lower() in _EMPTY_MAP_NAMES
+
+
+def _normalized_map_name(value):
+    text = _clean_map_field(value)
+    if not text:
+        return ''
+    text = _MAP_EXT.sub('', text).strip().lower()
+    return '' if text in _EMPTY_MAP_NAMES else text
+
+
+def _map_names_match(left, right):
+    """文件名的版本后缀常与日志地图名不一致，比对时忽略 ``_2.5b`` 这类尾巴。"""
+    a = _normalized_map_name(left)
+    b = _normalized_map_name(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    a = _MAP_VERSION_SUFFIX.sub('', a).strip(' _-')
+    b = _MAP_VERSION_SUFFIX.sub('', b).strip(' _-')
+    return bool(a) and a == b
+
+
+def _resolve_map_identity(crash_name, kk_name, client_name=None, client_author=None,
+                          kk_hash=None):
+    """客户端从地图文件读到的名字，只在能对上崩溃日志或平台会话时采用。"""
+    client_name = _clean_map_field(client_name)
+    crash_clean = _clean_map_field(crash_name)
+    kk_clean = _clean_map_field(kk_name)
+    crash_hash = _map_hash_from_name(crash_name)
+    kk_hash = _map_hash(kk_hash)
+    weak_crash = _is_weak_map_name(crash_name)
+    # 崩溃日志常把地图写成 ``<md5>.w3x``：和平台会话哈希一致即确认同一张图
+    hash_confirmed = bool(crash_hash and kk_hash and crash_hash == kk_hash)
+    if not client_name:
+        if kk_clean and (weak_crash or hash_confirmed):
+            return kk_clean, None
+        return crash_clean or kk_clean, None
+    if _map_names_match(client_name, crash_name):
+        accepted = True
+    elif hash_confirmed:
+        accepted = True
+    elif weak_crash and _map_names_match(client_name, kk_name):
+        accepted = True
+    elif weak_crash and not kk_clean:
+        accepted = True
+    else:
+        accepted = False
+    if accepted:
+        return client_name, _clean_map_field(client_author, 80, strip_path=False)
+    return crash_clean or kk_clean, None
+
+
+def _public_text(value, limit=4000):
+    """公开诊断文本中不保留 Windows 绝对路径，只留文件名。"""
+    text = _text(value, limit)
+    if not text:
+        return None
+    return _WIN_ABS_PATH.sub(
+        lambda match: match.group(0).replace('/', '\\').rsplit('\\', 1)[-1],
+        text)
+
 
 def _attribution(value):
     text = _text(value, 40)
@@ -55,8 +164,14 @@ def _attribution(value):
 
 
 def _module(value):
-    text = _text(value, 120)
-    return None if not text or text.lower() == "unknown" else text
+    """公开字段只保留模块文件名，兼容旧数据里的 Windows 绝对路径。"""
+    text = _text(value, 400)
+    if not text:
+        return None
+    text = text.replace("/", "\\").rsplit("\\", 1)[-1].strip()
+    if not text or text.lower() in ("unknown", "<unknown>"):
+        return None
+    return text[:120]
 
 
 def _confidence(value):
@@ -75,6 +190,15 @@ def _fingerprint(value):
 def _map_hash(value):
     text = _text(value, 64)
     return text.lower() if text and re.fullmatch(r"[0-9A-Fa-f]{32}", text) else None
+
+
+def _map_hash_from_name(value):
+    """崩溃日志里的 ``<md5>.w3x`` 地图名本身携带哈希。"""
+    text = _clean_map_field(value)
+    if not text:
+        return None
+    match = _MAP_HASH_NAME.match(text)
+    return match.group(1).lower() if match else None
 
 
 def _json_text(value, limit=4000):

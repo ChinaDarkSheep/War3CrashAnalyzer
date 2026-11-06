@@ -36,7 +36,10 @@ UPLOAD_DB_SCHEMA = '''
         analysis TEXT,
         kk_session TEXT,
         summary TEXT,
-        raw_deleted_at DATETIME
+        raw_deleted_at DATETIME,
+        feedback_status TEXT DEFAULT 'pending',
+        feedback_note TEXT,
+        feedback_at DATETIME
     )
 '''
 
@@ -57,6 +60,21 @@ UPLOAD_ROOT = os.path.abspath(UPLOAD_ROOT)
 ADMIN_TOKEN = (os.environ.get('WAR3_ADMIN_TOKEN') or '').strip()
 ADMIN_PAGE_SIZE_MAX = 200
 ADMIN_PREVIEW_BYTES = 512 * 1024
+
+# --- P2.11 上传反馈：维护者复核进度，随上传码公开给提交者 ---
+FEEDBACK_STATUSES = {
+    'pending': '待处理',
+    'reviewing': '复核中',
+    'resolved': '已处理',
+    'need_info': '需补充材料',
+}
+FEEDBACK_NOTE_MAX = 500
+
+# --- P2.12 客户端下载：单行配置，管理端随时更新网盘链接 ---
+DOWNLOAD_VERSION_MAX = 40
+DOWNLOAD_URL_MAX = 2000
+DOWNLOAD_CODE_MAX = 32
+DOWNLOAD_NOTE_MAX = 2000
 
 
 # --- 共享知识库：读取仓库根目录 knowledge.json，与客户端同源 ---

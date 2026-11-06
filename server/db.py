@@ -42,6 +42,7 @@ def init_db():
         'fingerprint_version': 'TEXT',
         'fingerprint_frames': 'TEXT',
         'map_hash': 'TEXT',
+        'map_author': 'TEXT',
         'stack': 'TEXT',
         'dmp_info': 'TEXT',
         'upload_code': 'TEXT',
@@ -57,6 +58,7 @@ def init_db():
                   map_key TEXT NOT NULL,
                   map_hash TEXT,
                   map_name TEXT,
+                  map_author TEXT,
                   fingerprint TEXT NOT NULL,
                   game_version TEXT,
                   module TEXT,
@@ -78,6 +80,7 @@ def init_db():
     c.execute("PRAGMA table_info(crash_aggregates)")
     aggregate_columns = [row[1] for row in c.fetchall()]
     annotation_columns = {
+        'map_author': 'TEXT',
         'annotation_source': 'TEXT',
         'annotation_confidence': 'REAL',
         'annotator': 'TEXT',
@@ -129,6 +132,10 @@ def init_db():
         'attribution': 'TEXT',
         'confidence': 'REAL',
         'report_count': 'INTEGER',
+        'feedback_status': "TEXT DEFAULT 'pending'",
+        'feedback_note': 'TEXT',
+        'feedback_at': 'DATETIME',
+        'map_author': 'TEXT',
     }
     for name, decl in upload_migrations.items():
         if name not in upload_columns:
@@ -146,13 +153,23 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_time "
               "ON admin_audit(created_at)")
 
+    # P2.12 客户端下载：单行配置，管理端随时更新网盘链接
+    c.execute('''CREATE TABLE IF NOT EXISTS client_download
+                 (id INTEGER PRIMARY KEY CHECK (id = 1),
+                  version TEXT,
+                  url TEXT,
+                  extract_code TEXT,
+                  note TEXT,
+                  updated_at DATETIME)''')
+    c.execute("INSERT OR IGNORE INTO client_download (id) VALUES (1)")
+
     conn.commit()
     conn.close()
 
 
 def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
                       game_version, module, relative_offset, attribution,
-                      timestamp):
+                      timestamp, map_author=None):
     """新崩溃入库时累加聚合次数；同一日志只入库一次，所以不会重复计数。"""
     key = _map_key(map_hash, map_name)
     fp = (fingerprint or "").strip().upper()
@@ -161,22 +178,24 @@ def _upsert_aggregate(c, report_id, map_hash, map_name, fingerprint,
     map_hash = map_hash.lower() if map_hash else None
     signature = _aggregate_signature(key, fp)
     c.execute('''INSERT INTO crash_aggregates
-                 (signature, map_key, map_hash, map_name, fingerprint,
+                 (signature, map_key, map_hash, map_name, map_author, fingerprint,
                   game_version, module, relative_offset, attribution,
                   occurrence, annotation, first_seen, last_seen, last_report_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)
                  ON CONFLICT(signature) DO UPDATE SET
                   occurrence = crash_aggregates.occurrence + 1,
                   last_seen = excluded.last_seen,
                   last_report_id = excluded.last_report_id,
                   map_hash = COALESCE(crash_aggregates.map_hash, excluded.map_hash),
                   map_name = COALESCE(crash_aggregates.map_name, excluded.map_name),
+                  map_author = COALESCE(crash_aggregates.map_author, excluded.map_author),
                   game_version = COALESCE(crash_aggregates.game_version, excluded.game_version),
                   module = COALESCE(crash_aggregates.module, excluded.module),
                   relative_offset = COALESCE(crash_aggregates.relative_offset, excluded.relative_offset),
                   attribution = COALESCE(crash_aggregates.attribution, excluded.attribution)''',
-              (signature, key, map_hash, map_name, fp, game_version, module,
-               relative_offset, attribution, timestamp, timestamp, report_id))
+              (signature, key, map_hash, map_name, map_author, fp, game_version,
+               module, relative_offset, attribution, timestamp, timestamp,
+               report_id))
 
 
 def rebuild_aggregates(conn=None):
@@ -196,8 +215,8 @@ def rebuild_aggregates(conn=None):
         }
         conn.execute("DELETE FROM crash_aggregates")
         rows = conn.execute(
-            "SELECT id, map_hash, map_name, fingerprint, game_version, module, "
-            "relative_offset, attribution, timestamp FROM crash_reports "
+            "SELECT id, map_hash, map_name, map_author, fingerprint, game_version, "
+            "module, relative_offset, attribution, timestamp FROM crash_reports "
             "WHERE fingerprint IS NOT NULL AND fingerprint <> '' "
             "ORDER BY timestamp, id")
 
@@ -215,6 +234,7 @@ def rebuild_aggregates(conn=None):
                     "map_key": key,
                     "map_hash": (row["map_hash"] or "").lower() or None,
                     "map_name": row["map_name"],
+                    "map_author": row["map_author"],
                     "fingerprint": fp,
                     "game_version": row["game_version"],
                     "module": row["module"],
@@ -225,7 +245,7 @@ def rebuild_aggregates(conn=None):
                 }
                 aggregates[signature] = entry
             else:
-                for field in ("map_hash", "map_name", "game_version",
+                for field in ("map_hash", "map_name", "map_author", "game_version",
                               "module", "relative_offset", "attribution"):
                     if not entry[field] and row[field]:
                         entry[field] = row[field]
@@ -236,14 +256,14 @@ def rebuild_aggregates(conn=None):
         for entry in aggregates.values():
             annotation = annotations.get(entry["signature"], {})
             conn.execute('''INSERT INTO crash_aggregates
-                            (signature, map_key, map_hash, map_name, fingerprint,
-                             game_version, module, relative_offset, attribution,
-                             occurrence, annotation, annotation_source,
+                            (signature, map_key, map_hash, map_name, map_author,
+                             fingerprint, game_version, module, relative_offset,
+                             attribution, occurrence, annotation, annotation_source,
                              annotation_confidence, annotator, annotated_at,
                              first_seen, last_seen, last_report_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                          (entry["signature"], entry["map_key"], entry["map_hash"],
-                          entry["map_name"], entry["fingerprint"],
+                          entry["map_name"], entry["map_author"], entry["fingerprint"],
                           entry["game_version"], entry["module"],
                           entry["relative_offset"], entry["attribution"],
                           entry["occurrence"],

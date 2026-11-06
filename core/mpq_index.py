@@ -11,6 +11,7 @@ MPQEditor 的占位名 ``File%08d.ext`` 编号等于 block index，补名后可�
 import os
 import re
 import struct
+import zlib
 
 _MAGIC = b"MPQ\x1a"
 _MAX_SCAN_BYTES = 16 * 1024 * 1024
@@ -67,7 +68,8 @@ def _hash_string(name, hash_type):
 def _decrypt(data, key):
     seed1 = key & 0xFFFFFFFF
     seed2 = 0xEEEEEEEE
-    out = bytearray(len(data))
+    # MPQ 按 4 字节分组加密，末尾不足 4 字节的部分保持原样
+    out = bytearray(data)
     for offset in range(0, len(data) - 3, 4):
         seed2 = (seed2 + _CRYPT[0x400 + (seed1 & 0xFF)]) & 0xFFFFFFFF
         value = struct.unpack_from("<I", data, offset)[0]
@@ -86,15 +88,31 @@ def normalize_name(name):
     return name.lstrip("\\")
 
 
+def _decompress_sector(chunk, compressed):
+    """解压单个扇区；只实现地图元数据最常见的 zlib 与未压缩。"""
+    if not compressed:
+        return chunk
+    if not chunk:
+        return b""
+    mask = chunk[0]
+    if mask == 0x00:
+        return chunk[1:]
+    if mask == 0x02:
+        return zlib.decompress(chunk[1:])
+    return None
+
+
 class MpqArchive:
-    """只解析 MPQ 头与哈希表，用于按文件名反查 block index。"""
+    """解析 MPQ 头、哈希表与块表；可只读提取小文件（如 war3map.w3i）。"""
 
     def __init__(self, path):
         self.path = path
         self.header_offset = 0
+        self.sector_shift = 0
         self.hash_count = 0
         self.block_count = 0
         self._pairs = {}
+        self._blocks = None
         self._load()
 
     def _load(self):
@@ -109,8 +127,8 @@ class MpqArchive:
                 offset = head.find(_MAGIC)
             if offset < 0 or offset + 32 > len(head):
                 raise ValueError("未找到 MPQ 头")
-            (_magic, _header_size, _archive_size, _version, _sector_shift,
-             hash_pos, _block_pos, hash_count,
+            (_magic, _header_size, _archive_size, _version, sector_shift,
+             hash_pos, block_pos, hash_count,
              block_count) = struct.unpack_from("<4sIIHHIIII", head, offset)
             if not 0 < hash_count <= 1 << 20 or block_count <= 0:
                 raise ValueError("MPQ 表大小异常")
@@ -128,8 +146,10 @@ class MpqArchive:
                 pairs.setdefault((name1, name2), block)
         self._pairs = pairs
         self.header_offset = offset
+        self.sector_shift = sector_shift
         self.hash_count = hash_count
         self.block_count = block_count
+        self.block_pos = block_pos
 
     def find_block(self, name):
         """返回文件名对应的 block index；不存在返回 None。"""
@@ -138,6 +158,83 @@ class MpqArchive:
             return None
         pair = (_hash_string(name, 1), _hash_string(name, 2))
         return self._pairs.get(pair)
+
+    def _block_table(self):
+        if self._blocks is None:
+            with open(self.path, "rb") as f:
+                f.seek(self.header_offset + self.block_pos)
+                raw = f.read(self.block_count * 16)
+            if len(raw) != self.block_count * 16:
+                raise ValueError("MPQ 块表越界")
+            raw = _decrypt(raw, _hash_string("(block table)", 3))
+            self._blocks = [
+                struct.unpack_from("<IIII", raw, index * 16)
+                for index in range(self.block_count)
+            ]
+        return self._blocks
+
+    def read_file(self, name, max_size=8 * 1024 * 1024):
+        """只读提取一个文件；遇到不支持的压缩/加密组合时返回 None。"""
+        block = self.find_block(name)
+        if block is None:
+            return None
+        try:
+            pos, packed, unpacked, flags = self._block_table()[block]
+        except (OSError, ValueError, struct.error, IndexError):
+            return None
+        if not flags & 0x80000000 or packed <= 0:
+            return None
+        if packed > max_size or unpacked > max_size:
+            return None
+        if flags & 0x04000000:  # 扇区 CRC 表会多一项，暂不支持
+            return None
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.header_offset + pos)
+                raw = f.read(packed)
+        except OSError:
+            return None
+        if len(raw) != packed:
+            return None
+
+        encrypted = bool(flags & 0x00010000)
+        compressed = bool(flags & 0x00000200)
+        key = _hash_string(normalize_name(name), 3)
+        if flags & 0x00020000:  # FIX_KEY
+            key = ((key + pos) ^ unpacked) & 0xFFFFFFFF
+
+        try:
+            if flags & 0x01000000:  # 单扇区
+                chunk = _decrypt(raw, key) if encrypted else raw
+                body = _decompress_sector(chunk, compressed)
+                return body[:unpacked] if body is not None else None
+
+            sector_size = 512 << max(0, min(self.sector_shift, 16))
+            sectors = max(1, (unpacked + sector_size - 1) // sector_size)
+            table_len = (sectors + 1) * 4
+            if len(raw) < table_len:
+                return None
+            table_raw = raw[:table_len]
+            if encrypted:
+                table_raw = _decrypt(table_raw, (key - 1) & 0xFFFFFFFF)
+            offsets = struct.unpack_from("<%dI" % (sectors + 1), table_raw, 0)
+            if offsets[0] < table_len or offsets[-1] > packed:
+                return None
+            if any(offsets[i] > offsets[i + 1] for i in range(sectors)):
+                return None
+
+            out = bytearray()
+            for index in range(sectors):
+                chunk = raw[offsets[index]:offsets[index + 1]]
+                if encrypted:
+                    chunk = _decrypt(chunk, (key + index) & 0xFFFFFFFF)
+                body = _decompress_sector(chunk, compressed)
+                if body is None:
+                    return None
+                out += body
+            return bytes(out[:unpacked])
+        except (struct.error, zlib.error, OSError):
+            return None
 
 
 def scan_asset_paths(data):

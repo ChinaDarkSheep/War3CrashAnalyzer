@@ -43,11 +43,12 @@ class AdvTab(BaseTab):
         jd_card = tk.LabelFrame(container, text=" 🐛 JassDebug 崩溃追踪插件 ", bg="#ffffff", padx=15, pady=10, font=("微软雅黑", 9, "bold"), fg="#2c3e50")
         jd_card.grid(row=1, column=0, columnspan=2, sticky=tk.NSEW, padx=5, pady=5)
         
-        tk.Label(jd_card, text="集成 ASI 插件，在崩溃发生时能够精准弹出具体的 JASS 报错行号，是地图开发者的必备调试工具。", 
+        tk.Label(jd_card, text="集成 ASI 插件，在崩溃发生时弹出 JASS 语句、函数链与代码偏移；本工具可只读读取并解析该弹窗。",
                  bg="#ffffff", font=("微软雅黑", 9), fg="#7f8c8d").pack(side=tk.LEFT, padx=(0, 20))
         
         jd_btn_box = tk.Frame(jd_card, bg="#ffffff")
         jd_btn_box.pack(side=tk.RIGHT)
+        tk.Button(jd_btn_box, text="解析弹窗", command=self.open_jassdebug_dialog, bg="#2980b9", fg="white", font=("微软雅黑", 9, "bold"), width=10).pack(side=tk.LEFT, padx=5)
         tk.Button(jd_btn_box, text="安装插件", command=self.install_jassdebug, bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"), width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(jd_btn_box, text="卸载", command=self.uninstall_jassdebug, bg="#95a5a6", fg="white", font=("微软雅黑", 9), width=8).pack(side=tk.LEFT, padx=5)
 
@@ -124,7 +125,8 @@ class AdvTab(BaseTab):
    - 建议用泄露定位功能检查未清理的句柄，本工具不提供自动补丁。
 
 4. 定位到具体脚本行号：
-   - 安装 JassDebug 插件后，脚本报错时游戏会直接提示出错的函数与行号。
+   - 安装 JassDebug 插件后，本地客户端崩溃时会弹出标题为“调试输出”的窗口。
+   - 保持弹窗打开，回到高级工具点击“解析弹窗”，即可读出 JASS 语句、所属函数、上级函数链与代码偏移。
 
 5. 环境与版本：
    - 不同游戏版本（1.24e / 1.27a / 1.28.5 等）的偏移不同，请确认日志中的版本与地图要求一致。
@@ -134,6 +136,11 @@ class AdvTab(BaseTab):
         content.insert(tk.END, text)
         content.config(state=tk.DISABLED)
         self.update_status("崩溃恢复引导已加载")
+
+    def open_jassdebug_dialog(self):
+        self.adv_log("[*] 正在打开 JassDebug 弹窗解析...")
+        from gui.jassdebug_dialog import JassDebugDialog
+        JassDebugDialog(self.app.root)
 
     def install_jassdebug(self):
         self.adv_log("[*] 正在安装 JassDebug 插件...")
@@ -211,7 +218,8 @@ class AdvTab(BaseTab):
    - 操作：选择地图后点击“执行泄露定位&修复”，软件将自动生成一个带有 '_leakfixed' 后缀的修复版地图。
 
 4. 高级工具页面：
-   - JassDebug：点击“安装插件”后，游戏崩溃时会直接弹出报错的脚本行号。
+   - JassDebug：点击“安装插件”后，本地客户端崩溃时会弹出“调试输出”窗口。
+   - 保持弹窗打开，点击“解析弹窗”，软件会读取并解析 JASS 语句、函数链与代码偏移。
 
 5. 如何上报崩溃：
    - 方式一（推荐）：在高级工具页开启“自动上报”，软件会随崩溃日志一起提交诊断结果。
