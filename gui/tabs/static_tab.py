@@ -52,7 +52,15 @@ class StaticTab(BaseTab):
         self.desync_log_btn = tk.Button(btn_container, text="🌐 同步日志", command=self.start_desync_log_analysis, bg="#f39c12", fg="white", font=("微软雅黑", 9, "bold"), width=12)
         self.desync_log_btn.pack(side=tk.LEFT, padx=2)
 
-        self.report_btn = tk.Button(btn_container, text="📤 上报崩溃", command=self.app.report_crash_to_server, bg="#34495e", fg="white", font=("微软雅黑", 9, "bold"), width=12)
+        self.report_btn = tk.Menubutton(
+            btn_container, text="📤 发送给维护者", bg="#34495e", fg="white",
+            font=("微软雅黑", 9, "bold"), width=14, relief=tk.RAISED)
+        self.report_menu = tk.Menu(self.report_btn, tearoff=0)
+        self.report_menu.add_command(
+            label="自动上报诊断数据", command=self.app.report_crash_to_server)
+        self.report_menu.add_command(
+            label="上传日志并获取上传码", command=self.app.open_upload_dialog)
+        self.report_btn.config(menu=self.report_menu)
         self.report_btn.pack(side=tk.LEFT, padx=2)
 
         log_frame = tk.LabelFrame(pane, text=" 📜 实时诊断日志 ", bg="#f5f6f7")

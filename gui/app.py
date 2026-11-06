@@ -186,6 +186,21 @@ class War3SuperAnalyzerGUI:
     def report_crash_to_server(self):
         self.reporter.report_crash_to_server(self.war3_path.get(), self.map_path.get(), is_auto=False)
 
+    def open_upload_dialog(self):
+        from gui.upload_dialog import UploadLogsDialog
+        dialog = getattr(self, "upload_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.deiconify()
+            dialog.lift()
+            dialog.focus_force()
+            return dialog
+        self.upload_dialog = UploadLogsDialog(self.root, self)
+        return self.upload_dialog
+
+    def upload_latest_crash(self, icon=None, item=None):
+        self.show_window()
+        self.root.after(100, self.open_upload_dialog)
+
     def save_config(self):
         config = {
             "war3_path": self.war3_path.get(), 
@@ -196,7 +211,8 @@ class War3SuperAnalyzerGUI:
             "report_interval": self.report_interval,
             "boot_start": self.boot_start,
             "min_to_tray": self.min_to_tray,
-            "auto_collect": self.auto_collect
+            "auto_collect": self.auto_collect,
+            "kk_log_path": self.config.get("kk_log_path", "")
         }
         try:
             with open(os.path.join(self.exe_dir, CONFIG_FILE), 'w', encoding='utf-8') as f:
@@ -277,6 +293,7 @@ class War3SuperAnalyzerGUI:
 
         menu = (
             item('显示主界面', self.show_window),
+            item('上传最近崩溃日志', self.upload_latest_crash),
             item('退出程序', self.quit_app)
         )
         self.tray_icon = pystray.Icon("War3SuperAnalyzer", image, "魔兽崩溃分析工具", menu)
