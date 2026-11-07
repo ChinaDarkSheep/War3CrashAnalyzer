@@ -150,6 +150,23 @@ class LeakFixTabSmokeTests(unittest.TestCase):
         self.assertFalse(os.path.exists(output))
         self.assertTrue(Path(source).is_file())
 
+    def test_summary_refreshes_validation_after_apply(self):
+        self._scan(self._map_copy("01_single_return_location.j"))
+        self.tab._apply_done({
+            "written": False,
+            "error": "preview only",
+            "validation": {"status": "ok", "errors": []},
+        })
+        summary = self.tab.summary_var.get()
+        self.assertIn("pjass 语法检查通过", summary)
+        self.assertNotIn("未校验", summary)
+
+    def test_summary_separates_rows_from_findings(self):
+        self._scan(self._map_copy("03_branch_destroy_group.j"))
+        summary = self.tab.summary_var.get()
+        self.assertIn("共 1 条记录", summary)
+        self.assertIn("泄露 1 条", summary)
+
     def test_lua_is_readonly(self):
         target = Path(self.temp.name) / "map.lua"
         target.write_text(

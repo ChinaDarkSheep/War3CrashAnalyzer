@@ -91,8 +91,17 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(row["rule_id"], "L01")
         self.assertTrue(row["patch"])
         self.assertFalse(row["auto"])
+        self.assertIn("补丁建议", row["suggestion"])
         self.assertIn("RemoveLocation", report["patch_diff"])
         self.assertNotIn("RemoveLocation", report["auto_diff"])
+
+    def test_uneditable_patch_match_does_not_suggest_patch(self):
+        _, report = report_for("03_branch_destroy_group.j")
+        row = report["rows"][0]
+        self.assertFalse(row["auto"])
+        self.assertFalse(row["patch"])
+        self.assertIn("只报告", row["suggestion"])
+        self.assertNotIn("生成补丁建议", row["suggestion"])
 
     def test_selection_key_matches_report_row(self):
         plan = build_fix_plan(CLEAN_AND_LEAK)

@@ -395,11 +395,14 @@ class LeakFixTab(BaseTab):
     def _summary_text(self, report):
         summary = report["summary"]
         levels = summary["by_level"]
+        rows = report["rows"]
+        auto_rows = sum(1 for row in rows if row["auto"])
+        patch_rows = sum(1 for row in rows if row["patch"])
         first = (
-            f"发现 {summary['findings']} 条 · "
+            f"共 {len(rows)} 条记录 · 泄露 {summary['findings']} 条 · "
             f"A {levels.get('A', 0)} / B {levels.get('B', 0)} / "
-            f"C {levels.get('C', 0)} · 自动 {summary['auto_findings']} / "
-            f"补丁 {summary['patch_findings']} / 提示 {summary['notices']}")
+            f"C {levels.get('C', 0)} · 自动 {auto_rows} / "
+            f"补丁 {patch_rows} / 提示 {summary['notices']}")
         second = (
             f"幂等 {'通过' if summary['idempotent'] else '未通过'} · "
             f"解析错误 {summary['parse_errors']} 行 · "
@@ -575,6 +578,7 @@ class LeakFixTab(BaseTab):
         validation = result.get("validation") or {"status": "unchecked"}
         if self.report is not None:
             self.report["validation"] = validation
+            self.summary_var.set(self._summary_text(self.report))
         self._append_log(f"[*] {_validation_line(validation)}")
         for error in (validation.get("errors") or [])[:5]:
             self._append_log(

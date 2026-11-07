@@ -33,11 +33,13 @@ _LEAK_SIGNALS = (
 )
 
 
-def _suggestion(match):
-    if match.auto_fixable:
+def _suggestion(match, *, auto, patch):
+    if auto:
         return "在函数出口前插入对应的销毁调用；默认勾选，应用前会展示 diff。"
+    if patch:
+        return "生成补丁建议，不自动写盘；可与 A 级一起应用或单独导出 diff。"
     if match.fix_mode == "patch":
-        return "生成补丁建议，不自动写盘；确认后可与 A 级一起应用或单独导出 diff。"
+        return "当前条目的销毁位置无法静态确定，只报告，不生成补丁。"
     if match.fix_mode == "report":
         return "只报告，不自动销毁；请人工确认对象生命周期。"
     return "没有可用编辑，请人工复核。"
@@ -74,7 +76,7 @@ def _row(match, lines, auto_keys, patch_keys, *, auxiliary=False):
         "suggestion": (
             "在已销毁语句后追加 `set var = null`；不改变销毁逻辑。"
             if auxiliary
-            else _suggestion(match)
+            else _suggestion(match, auto=auto, patch=patch)
         ),
         "reasons": list(match.reasons),
         "context": _context(lines, creation.line),
