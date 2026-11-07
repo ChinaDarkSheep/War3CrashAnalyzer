@@ -26,8 +26,16 @@ LOC_FUNCS = [
 TIMER_FUNCS = ["CreateTimer"]
 TRIGGER_FUNCS = ["CreateTrigger"]
 HASHTABLE_FUNCS = ["InitHashtable"]
-FORCE_FUNCS = ["CreateForce", "GetPlayersAll", "GetPlayersMatching", "GetPlayersInIsntance"]
+FORCE_FUNCS = ["CreateForce", "GetPlayersMatching", "GetPlayersInIsntance"]
 RECT_FUNCS = ["Rect", "RectFromCenterSizeBJ"]
+EFFECT_FUNCS = [
+    "AddSpecialEffect", "AddSpecialEffectLoc", "AddSpecialEffectLocBJ",
+    "AddSpecialEffectTarget", "AddSpecialEffectTargetUnitBJ",
+    "AddSpellEffect", "AddSpellEffectById", "AddSpellEffectLoc",
+    "AddSpellEffectByIdLoc", "AddSpellEffectTarget",
+    "AddSpellEffectTargetById",
+]
+LIGHTNING_FUNCS = ["AddLightning", "AddLightningEx", "AddLightningLoc"]
 
 ALL_LEAK_TYPES = {
     "location": ("RemoveLocation", LOC_FUNCS),
@@ -36,11 +44,19 @@ ALL_LEAK_TYPES = {
     "trigger": ("DestroyTrigger", TRIGGER_FUNCS),
     "hashtable": ("FlushParentHashtable", HASHTABLE_FUNCS),
     "force": ("DestroyForce", FORCE_FUNCS),
-    "rect": ("RemoveRect", RECT_FUNCS)
+    "rect": ("RemoveRect", RECT_FUNCS),
+    "effect": ("DestroyEffect", EFFECT_FUNCS),
+    "lightning": ("DestroyLightning", LIGHTNING_FUNCS),
 }
 
 # 这些创建函数返回的句柄通常会被长期持有，自动销毁会破坏地图逻辑
 NO_AUTO_DESTROY = {"CreateTrigger", "CreateTimer", "InitHashtable"}
+# 返回全局共享句柄的创建函数，任何销毁都会破坏引擎或地图状态
+SHARED_HANDLE_CREATORS = {"GetPlayersAll"}
+# 只有这些类型允许自动修改；矩形/计时器/触发器/哈希表仅定位报告
+AUTO_FIX_TYPES = {"location", "group", "force"}
+# 这些函数会接管传入句柄的所有权，销毁交给接收方
+OWNERSHIP_SINK_FUNCS = {"RegionAddRect"}
 RECT_FUNCS = ["RectFromCenterSizeBJ", "Rect"]
 BOOLEXPR_FUNCS = ["Condition", "Filter"]
 MATCHING_FUNCS = {"GetUnitsOfPlayerMatching", "GetUnitsInRectMatching", "GetUnitsInRangeOfLocMatching"}
@@ -56,3 +72,4 @@ for f in BOOLEXPR_FUNCS:
 ALL_FUNCS_SORTED = sorted(LEAK_CATEGORY.keys(), key=len, reverse=True)
 CALL_RE = re.compile(r'\b(' + '|'.join(re.escape(f) for f in ALL_FUNCS_SORTED) + r')\(')
 SET_RE = re.compile(r'^(\s*set\s+)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$')
+CALL_NAME_RE = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')

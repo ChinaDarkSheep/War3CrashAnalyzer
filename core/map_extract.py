@@ -161,8 +161,22 @@ def write_listfile_from_dir(directory, listfile_path, map_root=None):
     return listfile_path
 
 
+def guess_internal_path(script_path, extract_dir):
+    """从展开目录推断脚本在地图内的路径（w3x2lni 的 map/ 根优先）。"""
+    roots = [os.path.join(extract_dir, "map"), extract_dir]
+    for root in roots:
+        rel = os.path.relpath(script_path, root)
+        if not rel.startswith(".."):
+            return rel.replace("/", "\\")
+    return os.path.basename(script_path)
+
+
 def extract_script_with_mpq(map_file, mpq_editor_path, output_dir, log=None):
-    """原有策略：常用路径直提 -> /list 深度扫描 -> 取最大脚本。"""
+    """原有策略：常用路径直提 -> /list 深度扫描 -> 取最大脚本。
+
+    返回值中的 internal_path 是脚本在地图 MPQ 内的真实路径，写回时必须使用
+    该路径，否则 scripts\\war3map.j 会被错误覆盖成 war3map.j。
+    """
     log = log or (lambda _msg: None)
     os.makedirs(output_dir, exist_ok=True)
     listfile = build_dynamic_listfile(map_file, output_dir)
@@ -179,7 +193,8 @@ def extract_script_with_mpq(map_file, mpq_editor_path, output_dir, log=None):
             if os.path.exists(target) and os.path.getsize(target) > 100:
                 log(f"[+] 成功提取脚本: {name}")
                 return {"script_path": target, "listfile": listfile,
-                        "method": "MPQEditor", "output": ""}
+                        "method": "MPQEditor", "output": "",
+                        "internal_path": name.replace("/", "\\")}
     except OSError as exc:
         log(f"[-] MPQEditor 无法启动: {exc}")
         return {"script_path": None, "listfile": listfile,
@@ -210,11 +225,17 @@ def extract_script_with_mpq(map_file, mpq_editor_path, output_dir, log=None):
                 final = os.path.join(output_dir, "war3map" + extension)
                 if os.path.exists(final):
                     os.remove(final)
+                internal_path = next(
+                    (script for script in scripts
+                     if os.path.basename(script) == os.path.basename(best)),
+                    os.path.basename(best),
+                )
                 shutil.move(best, final)
                 log(f"[+] 深度扫描成功识别主脚本: "
                     f"{os.path.basename(best)} ({os.path.getsize(final)/1024:.1f} KB)")
                 return {"script_path": final, "listfile": listfile,
-                        "method": "MPQEditor", "output": output}
+                        "method": "MPQEditor", "output": output,
+                        "internal_path": internal_path.replace("/", "\\")}
     except Exception as exc:
         log(f"[-] 深度扫描异常: {exc}")
         return {"script_path": None, "listfile": listfile,
@@ -287,7 +308,8 @@ def extract_dir_with_mpq(map_file, mpq_editor_path, work_dir, log=None):
     name_stats = _recover_name_stats(map_file, out_dir, log)
     log("[*] 交给 w3x2lni 继续转换...")
     return {"dir": out_dir, "listfile": listfile, "script_path": script,
-            "name_stats": name_stats}
+            "name_stats": name_stats,
+            "internal_path": guess_internal_path(script, out_dir)}
 
 
 def extract_with_w3x2lni(exe_path, map_file, work_dir, log=None):
@@ -321,7 +343,8 @@ def extract_with_w3x2lni(exe_path, map_file, work_dir, log=None):
         map_root=os.path.dirname(script))
     log(f"[+] w3x2lni 还原成功：{os.path.basename(script)}")
     return {"script_path": script, "listfile": listfile,
-            "method": "w3x2lni", "output": output, "extract_dir": out_dir}
+            "method": "w3x2lni", "output": output, "extract_dir": out_dir,
+            "internal_path": guess_internal_path(script, out_dir)}
 
 
 def extract_script(map_file, mpq_editor_path, work_dir, w3x2lni_path=None, log=None):
@@ -329,11 +352,16 @@ def extract_script(map_file, mpq_editor_path, work_dir, w3x2lni_path=None, log=N
     log = log or (lambda _msg: None)
     if os.path.isdir(map_file):
         script = find_script(map_file)
+        internal = (
+            os.path.relpath(script, map_file).replace("/", "\\")
+            if script else None
+        )
         return {"script_path": script, "listfile": None,
-                "method": "目录", "output": ""}
+                "method": "目录", "output": "", "internal_path": internal}
     if map_file.lower().endswith((".j", ".lua")):
         return {"script_path": map_file, "listfile": None,
-                "method": "脚本文件", "output": ""}
+                "method": "脚本文件", "output": "",
+                "internal_path": os.path.basename(map_file)}
 
     os.makedirs(work_dir, exist_ok=True)
     if w3x2lni_path and os.path.isfile(w3x2lni_path):

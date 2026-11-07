@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext
 from gui.tabs.base import BaseTab
 from core.auditor import Auditor
+from core.leak_report import crash_evidence_text, leak_suspected_from_diagnosis
 
 
 class StaticTab(BaseTab):
@@ -209,9 +210,18 @@ class StaticTab(BaseTab):
     def _fit_top_pane(self):
         self.update_idletasks()
         try:
-            self.pane.sashpos(0, self.top_container.winfo_reqheight())
+            total = self.pane.winfo_height()
+            target = self.top_container.winfo_reqheight()
+            if total > 320:
+                target = min(target, total - 240)
+            self.pane.sashpos(0, target)
         except tk.TclError:
             pass
+
+    def _hide_step3(self):
+        self.diagnosed_log_path = None
+        self.step3_frame.pack_forget()
+        self._fit_top_pane()
 
     def browse_war3(self):
         path = filedialog.askdirectory(title="选择魔兽争霸 III 安装根目录 (包含 war3.exe)")
@@ -239,27 +249,38 @@ class StaticTab(BaseTab):
                 "没有找到可诊断的日志。请先确认魔兽目录，或点击“浏览…”手动选择日志文件。")
             return
 
+        self._hide_step3()
         self.update_status("正在诊断...")
         self.crash_btn.config(state=tk.DISABLED, text="正在诊断，请稍候...")
+        start_index = self.report_area.index(tk.END)
 
         def run():
             try:
                 res = self.auditor.analyze_selected_log(target)
             except Exception as e:
                 res = f"[-] 分析过程出错: {e}"
-            self.app.root.after(0, lambda: self._finish_diagnosis(res, target))
+            self.app.root.after(
+                0, lambda: self._finish_diagnosis(res, target, start_index))
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _finish_diagnosis(self, res, target):
+    def _finish_diagnosis(self, res, target, start_index=None):
         self._restore_crash_btn()
         self.update_status("崩溃日志分析完毕")
         self.log(res)
+        if leak_suspected_from_diagnosis(
+                getattr(self.auditor, "last_diagnosis", None)):
+            self.log("")
+            self.log(crash_evidence_text())
         self._refresh_log_options()
         if res.startswith("[+]"):
             self.diagnosed_log_path = target
             self.step3_frame.pack(fill=tk.X, pady=(12, 0))
             self._fit_top_pane()
+            if start_index:
+                self.report_area.see(start_index)
+        else:
+            self._hide_step3()
 
     def upload_diagnosed_log(self):
         if not self.diagnosed_log_path:

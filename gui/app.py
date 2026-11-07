@@ -11,7 +11,6 @@ import pystray
 from pystray import MenuItem as item
 from PIL import Image, ImageTk
 from core.reporter import Reporter
-from core.fixer import Fixer
 from core.watcher import CrashLogWatcher
 from gui.tabs.static_tab import StaticTab
 from gui.tabs.author_tab import AuthorTab
@@ -25,7 +24,8 @@ class War3SuperAnalyzerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("魔兽 RPG 崩溃分析工具 v1.1.0 - By DarkSheep (肥羊小站)")
-        self.root.geometry("1100x900")
+        self.root.geometry("1100x840")
+        self.root.minsize(1000, 680)
         self.root.configure(bg="#f5f6f7")
 
         self.map_path = tk.StringVar()
@@ -159,7 +159,7 @@ class War3SuperAnalyzerGUI:
         self.notebook.add(self.author_tab, text=" 地图作者工具 ")
 
         self.local_tab = LocalTab(self.notebook, self)
-        self.notebook.add(self.local_tab, text=" 本地调试 (实测模式) ")
+        self.notebook.add(self.local_tab, text=" 本地调试 ")
 
         self.leak_fix_tab = LeakFixTab(self.notebook, self)
         self.notebook.add(self.leak_fix_tab, text=" 泄露定位&修复 ")
@@ -250,8 +250,6 @@ class War3SuperAnalyzerGUI:
         self.boot_start = config.get("boot_start", False)
         self.min_to_tray = config.get("min_to_tray", True)
         self.auto_collect = config.get("auto_collect", True)
-        
-        self.fixer = Fixer(self.log)
 
     def update_boot_start_registry(self):
         if platform.system() != "Windows": return

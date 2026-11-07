@@ -212,12 +212,13 @@ class Reporter:
 
     def periodic_report_worker(self, stop_event, app):
         while not stop_event.is_set():
+            # 启动后先等待一个周期，避免一开机就扫描、诊断并上报历史日志
+            for _ in range(app.report_interval * 60):
+                if stop_event.is_set(): break
+                time.sleep(1)
+            if stop_event.is_set():
+                break
             if app.allow_report:
                 war3_path = app.war3_path.get()
                 map_path = app.map_path.get()
                 self.report_crash_to_server(war3_path, map_path, is_auto=True)
-            
-            # Wait for interval
-            for _ in range(app.report_interval * 60):
-                if stop_event.is_set(): break
-                time.sleep(1)

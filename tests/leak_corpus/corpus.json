@@ -1,0 +1,281 @@
+{
+  "version": 1,
+  "description": "P5.0 泄露分析语料。expected_findings 表示按目标语义真正需要报告的问题；forbidden_fix_patterns 表示当前/未来修复器绝不能产生的编辑。",
+  "options": {
+    "fix_point": true,
+    "fix_group": true,
+    "fix_rect": true,
+    "optimize_jass": true
+  },
+  "cases": [
+    {
+      "id": "01_single_return_location",
+      "file": "cases/01_single_return_location.j",
+      "intent": "单出口、未逃逸的局部点应被完整修复",
+      "level": "A",
+      "expected_findings": [
+        {"function": "SingleReturn", "variable": "loc", "type": "location"}
+      ],
+      "must_fix_patterns": ["call RemoveLocation\\(loc\\)"],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 1, "max": 1}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "最基础的正例，用于确认基线能力没有退化。"
+    },
+    {
+      "id": "02_multi_return_location",
+      "file": "cases/02_multi_return_location.j",
+      "intent": "多出口函数的清理位置无法静态确定时只报告，不自动修改",
+      "level": "B",
+      "expected_findings": [
+        {"function": "MultiReturn", "variable": "loc", "type": "location"}
+      ],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "止血阶段对多出口函数不再自动插入清理，等 P5.2 CFG 完成后再逐个出口处理。"
+    },
+    {
+      "id": "03_branch_destroy_group",
+      "file": "cases/03_branch_destroy_group.j",
+      "intent": "仅在某个分支内销毁不等于所有路径都已清理",
+      "level": "B",
+      "expected_findings": [
+        {"function": "BranchDestroy", "variable": "g", "type": "group"}
+      ],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现只要函数内出现 DestroyGroup(g) 就认为已处理，产生漏报。"
+    },
+    {
+      "id": "04_loop_inline_location",
+      "file": "cases/04_loop_inline_location.j",
+      "intent": "循环体内的内联点创建应被提升并在每次迭代后销毁",
+      "level": "A",
+      "expected_findings": [
+        {"function": "LoopInline", "variable": null, "type": "location"}
+      ],
+      "must_fix_patterns": ["call RemoveLocation\\(leakfix_loc_\\d+\\)"],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现能提升内联调用；用于守住已有能力。"
+    },
+    {
+      "id": "05_sleep_group",
+      "file": "cases/05_sleep_group.j",
+      "intent": "TriggerSleepAction 之后仍使用的句柄应在函数末尾清理",
+      "level": "A",
+      "expected_findings": [
+        {"function": "Sleepy", "variable": "g", "type": "group"}
+      ],
+      "must_fix_patterns": ["call DestroyGroup\\(g\\)"],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [
+        {"destroyer": "DestroyGroup", "variable": "g", "min": 1, "max": 1}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "用于确认清理点不会因为等待而提前。"
+    },
+    {
+      "id": "06_gui_group",
+      "file": "cases/06_gui_group.j",
+      "intent": "GUI 的 bj_wantDestroyGroup + ForGroupBJ 已经负责销毁，不能再插一次",
+      "level": "B",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["DestroyGroup\\(leakfix_gro_\\d+\\)"],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会把 GUI 枚举的单位组提升后再次 DestroyGroup，存在双重销毁风险。"
+    },
+    {
+      "id": "07_escape_global_location",
+      "file": "cases/07_escape_global_location.j",
+      "intent": "局部句柄存入全局后所有权已转移，不能自动销毁",
+      "level": "B",
+      "expected_findings": [
+        {"function": "EscapeGlobal", "variable": "loc", "type": "location"}
+      ],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["call RemoveLocation\\(loc\\)"],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现无条件在函数末尾销毁，属于危险修复。"
+    },
+    {
+      "id": "08_shared_force",
+      "file": "cases/08_shared_force.j",
+      "intent": "GetPlayersAll() 返回共享全局 force，任何自动销毁都是致命的",
+      "level": "C",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [
+        "call DestroyForce\\(bj_sharedForce\\)",
+        "call DestroyForce\\(f\\)"
+      ],
+      "destroy_checks": [
+        {"destroyer": "DestroyForce", "variable": "bj_sharedForce", "min": 0, "max": 0},
+        {"destroyer": "DestroyForce", "variable": "f", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会对 set bj_sharedForce = GetPlayersAll() 插入 DestroyForce；定位侧还会把局部 f 误报为泄露。"
+    },
+    {
+      "id": "09_new_force_local",
+      "file": "cases/09_new_force_local.j",
+      "intent": "函数内新建的局部 force 应被自动销毁",
+      "level": "A",
+      "expected_findings": [
+        {"function": "NewForceLocal", "variable": "f", "type": "force"}
+      ],
+      "must_fix_patterns": ["call DestroyForce\\(f\\)"],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [
+        {"destroyer": "DestroyForce", "variable": "f", "min": 1, "max": 1}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现只处理点/组/矩形，新建玩家组能定位但不能修复。"
+    },
+    {
+      "id": "10_comment_and_string",
+      "file": "cases/10_comment_and_string.j",
+      "intent": "注释和字符串里的创建函数名不得被当成代码",
+      "level": "C",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [
+        "local group leakfix_gro_",
+        "DestroyGroup\\(leakfix_gro_"
+      ],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会对字符串和行尾注释中的 CreateGroup() 做提升，可能改变提示文本。"
+    },
+    {
+      "id": "11_spaced_destroy",
+      "file": "cases/11_spaced_destroy.j",
+      "intent": "已存在带空格的销毁调用时不得重复插入",
+      "level": "A",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["call RemoveLocation\\(loc\\)"],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 0, "max": 1}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现用无空格字符串匹配，会产生重复销毁；定位侧还会把 RemoveLocation 里的 Location 子串误报为创建调用。"
+    },
+    {
+      "id": "12_return_handle",
+      "file": "cases/12_return_handle.j",
+      "intent": "返回给调用方的句柄所有权已转移，不能在函数内销毁",
+      "level": "B",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["RemoveLocation\\(loc\\)"],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会在 return loc 之前插入销毁，直接破坏返回值。"
+    },
+    {
+      "id": "13_long_lived_timer",
+      "file": "cases/13_long_lived_timer.j",
+      "intent": "周期计时器是长期对象，不应被当作泄露或自动销毁",
+      "level": "C",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["DestroyTimer\\(t\\)"],
+      "destroy_checks": [
+        {"destroyer": "DestroyTimer", "variable": "t", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前定位会把长期计时器报成泄露；修复器暂未处理 timer。"
+    },
+    {
+      "id": "14_idempotent_location",
+      "file": "cases/14_idempotent_location.j",
+      "intent": "重复执行修复器不得重复插入销毁代码",
+      "level": "A",
+      "expected_findings": [
+        {"function": "Idempotent", "variable": "loc", "type": "location"}
+      ],
+      "must_fix_patterns": ["call RemoveLocation\\(loc\\)"],
+      "forbidden_fix_patterns": [],
+      "destroy_checks": [
+        {"destroyer": "RemoveLocation", "variable": "loc", "min": 1, "max": 1}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "所有用例都会计算幂等性，这一例作为显式正例。"
+    },
+    {
+      "id": "15_return_inline_location",
+      "file": "cases/15_return_inline_location.j",
+      "intent": "内联创建后直接返回时所有权转移，不能提升后追加销毁",
+      "level": "B",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["call RemoveLocation\\(leakfix_loc_\\d+\\)"],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会生成 return 之后的不可达销毁代码，属于无效编辑。"
+    },
+    {
+      "id": "16_local_rect_scope",
+      "file": "cases/16_local_rect_scope.j",
+      "intent": "本版自动修复范围不含矩形，矩形只应给出建议",
+      "level": "B",
+      "expected_findings": [
+        {"function": "LocalRect", "variable": "r", "type": "rect"}
+      ],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": ["call RemoveRect\\(r\\)"],
+      "destroy_checks": [
+        {"destroyer": "RemoveRect", "variable": "r", "min": 0, "max": 0}
+      ],
+      "expected_guarded_returns": null,
+      "notes": "当前实现仍会自动修复矩形，与已确认的首版范围不一致；定位侧还会把 RegionAddRect 里的 Rect 子串误报为创建调用。"
+    },
+    {
+      "id": "17_substring_creator",
+      "file": "cases/17_substring_creator.j",
+      "intent": "创建函数名必须按完整标识符匹配，不能把 RegionAddRect 里的 Rect 当成创建调用",
+      "level": "C",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [
+        "local rect leakfix_rec_",
+        "call RemoveRect\\(leakfix_rec_"
+      ],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现用无边界子串匹配，会把 RegionAddRect(...) 整体替换成 rect 变量，直接破坏调用。"
+    },
+    {
+      "id": "18_global_rect_init",
+      "file": "cases/18_global_rect_init.j",
+      "intent": "全局矩形初始化属于长生命周期对象，不能被提升后立即销毁",
+      "level": "B",
+      "expected_findings": [],
+      "must_fix_patterns": [],
+      "forbidden_fix_patterns": [
+        "local rect leakfix_rec_",
+        "call RemoveRect\\(leakfix_rec_"
+      ],
+      "destroy_checks": [],
+      "expected_guarded_returns": null,
+      "notes": "当前实现会把 set gg_rct_Test = Rect(...) 改写成局部变量赋值后立即 RemoveRect，导致全局矩形失效。"
+    }
+  ]
+}

@@ -1,0 +1,628 @@
+{
+  "corpus_version": 1,
+  "summary": {
+    "cases": 18,
+    "expected_findings": 9,
+    "actual_findings": 10,
+    "matched_findings": 8,
+    "missed_findings": 1,
+    "extra_findings": 2,
+    "precision": 0.8,
+    "recall": 0.8888888888888888,
+    "idempotent_cases": 18,
+    "cases_with_violations": 1,
+    "violations": 1,
+    "analysis_errors": 0
+  },
+  "cases": [
+    {
+      "id": "01_single_return_location",
+      "level": "A",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 1,
+      "source_sha256": "ce5bac353e137106e4a6a71e49148b1d1da2262f5ff73a0e0b8db914f70cefc9",
+      "fixed_sha256": "f4082cd0a745115b0ca0a481419ac363308b2d7f8af5d46118e8ca7dcfc78981",
+      "fixed_length": 186,
+      "fixed_equals_source": false,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 1,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "must_fix": [
+        {
+          "pattern": "call RemoveLocation\\(loc\\)",
+          "hit": true
+        }
+      ],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "02_multi_return_location",
+      "level": "B",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "136c1689211c8dfe94ab19714af2ee4cb8094f125cb2061730958b8e5847464e",
+      "fixed_sha256": "136c1689211c8dfe94ab19714af2ee4cb8094f125cb2061730958b8e5847464e",
+      "fixed_length": 244,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "03_branch_destroy_group",
+      "level": "B",
+      "expected_count": 1,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [
+        {
+          "function": "BranchDestroy",
+          "variable": "g",
+          "type": "group"
+        }
+      ],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "468924aa8316bdde7bde7648151f08d37e45be7d06616f5486a46e2afdbdcae1",
+      "fixed_sha256": "468924aa8316bdde7bde7648151f08d37e45be7d06616f5486a46e2afdbdcae1",
+      "fixed_length": 286,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [],
+      "violations": [
+        "finding_missed:BranchDestroy/group/g"
+      ],
+      "error": null
+    },
+    {
+      "id": "04_loop_inline_location",
+      "level": "A",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 1,
+      "source_sha256": "48b8e9ff994e3a82b5e23ff4c648025d99459b8f95caaabe6b319d3d9f5dc399",
+      "fixed_sha256": "95f86ed97afb58ee43dbaa74ce816e10c1db6e8e664548647b603792ab38a6d3",
+      "fixed_length": 331,
+      "fixed_equals_source": false,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [
+        {
+          "pattern": "call RemoveLocation\\(leakfix_loc_\\d+\\)",
+          "hit": true
+        }
+      ],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "05_sleep_group",
+      "level": "A",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 1,
+      "source_sha256": "8d419ee9a87605af6b8f2319ca22f948248f4439a743ed5fa0f43bdfef740fea",
+      "fixed_sha256": "044179d0f01a0a4e713ce4ff7503d28dfd3711af86d17e747481b46eab9ffe10",
+      "fixed_length": 235,
+      "fixed_equals_source": false,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "DestroyGroup",
+          "variable": "g",
+          "count": 1,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "must_fix": [
+        {
+          "pattern": "call DestroyGroup\\(g\\)",
+          "hit": true
+        }
+      ],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "06_gui_group",
+      "level": "B",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "142cc1d463d5edf9593580e5af8f3ccf46dcccd5b9b84ed240bd07f34c76aead",
+      "fixed_sha256": "142cc1d463d5edf9593580e5af8f3ccf46dcccd5b9b84ed240bd07f34c76aead",
+      "fixed_length": 160,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "DestroyGroup\\(leakfix_gro_\\d+\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "07_escape_global_location",
+      "level": "B",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "230352f52b9718452e8554eb7f1bfb766d84bd86a6c313dfa4c2ec0f5bb56b7b",
+      "fixed_sha256": "230352f52b9718452e8554eb7f1bfb766d84bd86a6c313dfa4c2ec0f5bb56b7b",
+      "fixed_length": 129,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "call RemoveLocation\\(loc\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "08_shared_force",
+      "level": "C",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 2,
+      "leak_counter": 0,
+      "source_sha256": "3cf15b35b2acf6490c79799eb67034970f1ff6a4eef07d6caa0044be172c1977",
+      "fixed_sha256": "3cf15b35b2acf6490c79799eb67034970f1ff6a4eef07d6caa0044be172c1977",
+      "fixed_length": 290,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "DestroyForce",
+          "variable": "bj_sharedForce",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        },
+        {
+          "destroyer": "DestroyForce",
+          "variable": "f",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "call DestroyForce\\(bj_sharedForce\\)",
+          "hit": false
+        },
+        {
+          "pattern": "call DestroyForce\\(f\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "09_new_force_local",
+      "level": "A",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 1,
+      "source_sha256": "cea85fca0eebc0ca96d84609e7ff1323ae74146197dda560f240d65629271d7b",
+      "fixed_sha256": "9ab83477723b6810f0cd8c42bd8c071c83985defb6fc98ef3f96b15c11c81c18",
+      "fixed_length": 205,
+      "fixed_equals_source": false,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "DestroyForce",
+          "variable": "f",
+          "count": 1,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "must_fix": [
+        {
+          "pattern": "call DestroyForce\\(f\\)",
+          "hit": true
+        }
+      ],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "10_comment_and_string",
+      "level": "C",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "a11b373173016bad57598d87df023480f88228fde6250832d02ccb87a12cca4c",
+      "fixed_sha256": "a11b373173016bad57598d87df023480f88228fde6250832d02ccb87a12cca4c",
+      "fixed_length": 192,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "local group leakfix_gro_",
+          "hit": false
+        },
+        {
+          "pattern": "DestroyGroup\\(leakfix_gro_",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "11_spaced_destroy",
+      "level": "A",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "af02f1066b6e236dc16872c249abbf1225410a274c4604a123969eba0601ce52",
+      "fixed_sha256": "af02f1066b6e236dc16872c249abbf1225410a274c4604a123969eba0601ce52",
+      "fixed_length": 171,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 1,
+          "min": 0,
+          "max": 1
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "call RemoveLocation\\(loc\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "12_return_handle",
+      "level": "B",
+      "expected_count": 0,
+      "actual_count": 1,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [
+        {
+          "function": "ReturnHandle",
+          "variable": "loc",
+          "type": "location",
+          "line": 2
+        }
+      ],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "5979e93b5fb88d3be483fb191e6061c5d47e5cf8592412478696fa272950f4b8",
+      "fixed_sha256": "5979e93b5fb88d3be483fb191e6061c5d47e5cf8592412478696fa272950f4b8",
+      "fixed_length": 118,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "RemoveLocation\\(loc\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "13_long_lived_timer",
+      "level": "C",
+      "expected_count": 0,
+      "actual_count": 1,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [
+        {
+          "function": "LongTimer",
+          "variable": "t",
+          "type": "timer",
+          "line": 5
+        }
+      ],
+      "nfuncs": 2,
+      "leak_counter": 0,
+      "source_sha256": "3d986bd0aaef3164f38a897974eb495f0edaf1e3de1d3bc164e3584a1e7aee56",
+      "fixed_sha256": "3d986bd0aaef3164f38a897974eb495f0edaf1e3de1d3bc164e3584a1e7aee56",
+      "fixed_length": 201,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "DestroyTimer",
+          "variable": "t",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "DestroyTimer\\(t\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "14_idempotent_location",
+      "level": "A",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 1,
+      "source_sha256": "6f33949dc9f2bc0708138c487d692f0e39cd3c1b898253091b6868cde4ab48a7",
+      "fixed_sha256": "f0e82fe10675a25d03324a97e4e37e310390498de780637c3a7c25e735f57e95",
+      "fixed_length": 184,
+      "fixed_equals_source": false,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveLocation",
+          "variable": "loc",
+          "count": 1,
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "must_fix": [
+        {
+          "pattern": "call RemoveLocation\\(loc\\)",
+          "hit": true
+        }
+      ],
+      "forbidden_hits": [],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "15_return_inline_location",
+      "level": "B",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "62e8b8ea789b7426e6507feb7166691039e2e46243a8934aba88de626aa950c7",
+      "fixed_sha256": "62e8b8ea789b7426e6507feb7166691039e2e46243a8934aba88de626aa950c7",
+      "fixed_length": 89,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "call RemoveLocation\\(leakfix_loc_\\d+\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "16_local_rect_scope",
+      "level": "B",
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched_count": 1,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "4e5cdea14d48737a7e96dedfc204819d4d754f84d83fa0286899fb381a27b674",
+      "fixed_sha256": "4e5cdea14d48737a7e96dedfc204819d4d754f84d83fa0286899fb381a27b674",
+      "fixed_length": 151,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [
+        {
+          "destroyer": "RemoveRect",
+          "variable": "r",
+          "count": 0,
+          "min": 0,
+          "max": 0
+        }
+      ],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "call RemoveRect\\(r\\)",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "17_substring_creator",
+      "level": "C",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "f17ff3d78772ca8f2e4e3b3f64dff5ec3788b9816015835e11b5ee53df609539",
+      "fixed_sha256": "f17ff3d78772ca8f2e4e3b3f64dff5ec3788b9816015835e11b5ee53df609539",
+      "fixed_length": 133,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "local rect leakfix_rec_",
+          "hit": false
+        },
+        {
+          "pattern": "call RemoveRect\\(leakfix_rec_",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    },
+    {
+      "id": "18_global_rect_init",
+      "level": "B",
+      "expected_count": 0,
+      "actual_count": 0,
+      "matched_count": 0,
+      "missed": [],
+      "extras": [],
+      "nfuncs": 1,
+      "leak_counter": 0,
+      "source_sha256": "1022a3e3412684beef0f4daf4f69cb5b839db49ee644a0adfb5cd302bfd86d5b",
+      "fixed_sha256": "1022a3e3412684beef0f4daf4f69cb5b839db49ee644a0adfb5cd302bfd86d5b",
+      "fixed_length": 112,
+      "fixed_equals_source": true,
+      "idempotent": true,
+      "guarded_returns": null,
+      "destroy_counts": [],
+      "must_fix": [],
+      "forbidden_hits": [
+        {
+          "pattern": "local rect leakfix_rec_",
+          "hit": false
+        },
+        {
+          "pattern": "call RemoveRect\\(leakfix_rec_",
+          "hit": false
+        }
+      ],
+      "violations": [],
+      "error": null
+    }
+  ]
+}

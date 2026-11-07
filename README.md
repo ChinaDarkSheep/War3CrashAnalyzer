@@ -15,7 +15,12 @@ war3crashanalyzer/
 ├── analyzer_config.json    # 用户配置文件 (自动生成)
 ├── core/                   # 核心业务逻辑模块
 │   ├── auditor.py          # 静态审计、资源提取与崩溃日志分析
-│   ├── fixer.py            # JASS 脚本泄露定位&修复引擎
+│   ├── fixer.py            # P5.0 基线泄露修复器（语料基准）
+│   ├── jass_lexer.py / jass_ast.py / jass_parser.py / jass_cfg.py / jass_semantics.py # JASS 解析、控制流与逃逸分析
+│   ├── leak_catalog.py     # 泄露规则目录与分级（A/B/C）
+│   ├── leak_fixer.py       # 修复计划、diff、pjass 校验与安全写回
+│   ├── leak_report.py      # 统一泄露报告（Markdown / JSON / CSV）
+│   ├── map_script.py       # 地图脚本读取、副本写回、重新提取校验与撤销
 │   ├── reporter.py         # 云端数据上报与后台定期任务
 │   ├── knowledge.py        # knowledge.json 加载与版本/RVA 归一化
 │   ├── logtext.py          # 日志编码识别、明文原因与归属判定
@@ -85,8 +90,10 @@ war3crashanalyzer/
 *   **句柄快照**：对比不同时间点的句柄状态，精准定位内存泄露源。
 
 ### 3. 泄露定位&修复 (Core.Fixer)
-*   扫描 `war3map.j` 的局部变量与内联创建调用（如 `call KillUnit(GetUnitLoc(u))` 中的匿名点），在使用结束后插入销毁函数。
-*   `CreateTrigger` / `CreateTimer` / `InitHashtable` 不会被自动销毁，避免修复后地图逻辑失效。
+*   手动发起扫描：选择地图或脚本后只在本地生成候选清单，不会自动改写文件。A 级（可安全自动修复）默认勾选，B 级只生成补丁，C 级仅报告。
+*   自动修复只覆盖三类 A 级模式：局部 `location`、局部 `group`、函数内新建的 `force`（`CreateForce`），以及同一语句中可安全提升的内联点/组。`CreateTrigger` / `CreateTimer` / `InitHashtable`、共享/全局句柄、GUI 变量与逃逸句柄不会自动销毁。
+*   应用前展示逐条 diff；写入目标是 `<地图名>_leakfixed.w3x` 副本，原图保持只读，可一键撤销。写回前做 pjass 语法检查与 `local` 声明位置检查，写回后重新提取脚本校验，失败自动回滚。
+*   报告可导出 Markdown / JSON / CSV，包含规则、等级、置信度、证据片段、覆盖范围与修复状态；崩溃诊断确认“内存不足”时，诊断页会追加只读的疑似泄露证据。
 
 ### 4. 配套 Web 服务 (Server)
 *   **自动上报与聚合**：服务端提供 `/api/report`、`/api/stats`、`/api/aggregates`，按「地图身份 + 栈指纹」聚合相同崩溃并统计次数；`/author` 供地图作者按地图哈希或地图名查询崩溃指纹排行、趋势与脱敏样本。路由按职责拆分在 `server/blueprints/`，入口仍是 `server/app.py`。

@@ -34,6 +34,8 @@ class Auditor:
     def __init__(self, log_func, update_status_func, base_dir=None):
         self.log = log_func
         self.update_status = update_status_func
+        # 供界面追加“疑似泄露证据”使用；只保存最近一次结构化诊断结果。
+        self.last_diagnosis = None
         if base_dir:
             db_path = os.path.join(base_dir, "history.db")
             self.history = HistoryTracker(db_path)
@@ -576,6 +578,7 @@ class Auditor:
         dmp_path = os.path.splitext(log_path)[0] + ".dmp"
         dmp = self._analyze_dmp(dmp_path) if os.path.exists(dmp_path) else None
         result = self._merge_dmp(result, dmp)
+        self.last_diagnosis = result
         if dmp and dmp.get("analysis"):
             result["analysis_text"] = (dmp["analysis"] + "\n"
                                        + result["analysis_text"]).strip()
@@ -695,6 +698,7 @@ class Auditor:
         content = read_log(latest_log)
         result = self.analyze_log_content(content)
         result = self._merge_dmp(result, dmp_info)
+        self.last_diagnosis = result
         addr = result["addr"]
         relative_offset = result["relative_offset"]
         analysis = result["analysis_text"]
@@ -783,6 +787,7 @@ class Auditor:
             "reported": status["reported"] if status else False,
         }
         self.log(f"\n[*] 正在分析所选日志: {name}")
+        self.last_diagnosis = None
         try:
             self._diagnose_log_entry(target_log)
         except Exception as e:
