@@ -204,7 +204,7 @@ class CrashEvidenceTests(unittest.TestCase):
 
     def test_evidence_text_is_read_only(self):
         text = crash_evidence_text()
-        self.assertIn("泄露定位&修复", text)
+        self.assertIn("泄露检查", text)
         self.assertIn("不会修改地图", text)
         self.assertNotIn("自动修复", text)
 

@@ -13,9 +13,8 @@ from PIL import Image, ImageTk
 from core.reporter import Reporter
 from core.watcher import CrashLogWatcher
 from gui.tabs.static_tab import StaticTab
-from gui.tabs.author_tab import AuthorTab
-from gui.tabs.local_tab import LocalTab
-from gui.tabs.leak_fix_tab import LeakFixTab
+from gui.tabs.records_tab import RecordsTab
+from gui.tabs.health_tab import HealthTab
 from gui.tabs.adv_tab import AdvTab
 
 CONFIG_FILE = "analyzer_config.json"
@@ -155,17 +154,14 @@ class War3SuperAnalyzerGUI:
         self.static_tab = StaticTab(self.notebook, self)
         self.notebook.add(self.static_tab, text=" 崩溃诊断 ")
 
-        self.author_tab = AuthorTab(self.notebook, self)
-        self.notebook.add(self.author_tab, text=" 地图作者工具 ")
+        self.records_tab = RecordsTab(self.notebook, self)
+        self.notebook.add(self.records_tab, text=" 崩溃记录 ")
 
-        self.local_tab = LocalTab(self.notebook, self)
-        self.notebook.add(self.local_tab, text=" 本地调试 ")
-
-        self.leak_fix_tab = LeakFixTab(self.notebook, self)
-        self.notebook.add(self.leak_fix_tab, text=" 泄露定位&修复 ")
+        self.health_tab = HealthTab(self.notebook, self)
+        self.notebook.add(self.health_tab, text=" 地图体检 ")
 
         self.adv_tab = AdvTab(self.notebook, self)
-        self.notebook.add(self.adv_tab, text=" 高级工具 & 设置 ")
+        self.notebook.add(self.adv_tab, text=" 高级与设置 ")
 
         # Status Bar
         tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W).pack(side=tk.BOTTOM, fill=tk.X)
@@ -329,12 +325,12 @@ class War3SuperAnalyzerGUI:
 1. 崩溃追踪插件 (JassDebug)：
    - 操作：自动安装 JassDebug.asi 到魔兽目录。
    - 作用：本地客户端崩溃时弹出 JASS 语句、函数链与代码偏移；
-     可在「高级工具 & 设置」点击“解析弹窗”读取并解析。
+     可在「高级与设置 → 插件与上报」点击“解析弹窗”读取并解析。
 
 2. 自动上报崩溃日志：
    - 目的：收集大数据，优化通用崩溃库，帮助所有作者定位问题。
    - 隐私：会上传崩溃日志的文本内容（其中可能包含 Windows 用户名、计算机名和本地路径）、
-     系统版本与地图名。如不希望上传，可在「高级工具 & 设置」中关闭自动上报。"""
+     系统版本与地图名。如不希望上传，可在「高级与设置」中关闭自动上报。"""
         content.insert(tk.END, info)
         content.config(state=tk.DISABLED)
 

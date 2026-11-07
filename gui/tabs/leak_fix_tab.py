@@ -72,7 +72,7 @@ class LeakFixTab(BaseTab):
         title_row = tk.Frame(main, bg="#f5f6f7")
         title_row.pack(fill=tk.X, pady=(0, 6))
         tk.Label(
-            title_row, text="泄露定位&修复", font=("微软雅黑", 12, "bold"),
+            title_row, text="泄露检查", font=("微软雅黑", 12, "bold"),
             bg="#f5f6f7", fg="#2c3e50").pack(side=tk.LEFT)
         tk.Label(
             title_row,

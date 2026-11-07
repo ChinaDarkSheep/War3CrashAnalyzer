@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "file": "cases/jass_d1_create_unit.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D1", "function": "Trig_D1", "line": 3}
+      ],
+      "absent_rules": ["D2", "D3", "D4", "D5"]
+    },
+    {
+      "file": "cases/jass_d2_group.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D2", "function": "Trig_D2", "line": 7}
+      ],
+      "absent_rules": ["D1", "D3", "D4", "D5"]
+    },
+    {
+      "file": "cases/jass_d3_random.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D3", "function": "Trig_D3", "line": 4}
+      ],
+      "absent_rules": ["D1", "D2", "D4", "D5"]
+    },
+    {
+      "file": "cases/jass_d4_global_write.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D4", "function": "Trig_D4", "line": 7}
+      ],
+      "absent_rules": ["D1", "D2", "D3", "D5"]
+    },
+    {
+      "file": "cases/jass_d5_local_input.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D5", "function": "Trig_D5", "line": 2},
+        {"rule": "D5", "function": "Trig_D5_Mixed", "line": 8}
+      ],
+      "absent_rules": ["D1", "D2", "D3", "D4"]
+    },
+    {
+      "file": "cases/jass_visual_safe.j",
+      "language": "jass",
+      "expect": [],
+      "absent_rules": ["D1", "D2", "D3", "D4", "D5"]
+    },
+    {
+      "file": "cases/jass_else_branch.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D1", "function": "Trig_Else", "line": 5}
+      ],
+      "absent_rules": ["D2", "D3", "D4", "D5"]
+    },
+    {
+      "file": "cases/jass_loop_random.j",
+      "language": "jass",
+      "expect": [
+        {"rule": "D3", "function": "Trig_Loop", "line": 6}
+      ],
+      "absent_rules": ["D1", "D2", "D4", "D5"]
+    },
+    {
+      "file": "cases/lua_rules.lua",
+      "language": "lua",
+      "expect": [
+        {"rule": "L1", "function": "", "line": 2},
+        {"rule": "L2", "function": "", "line": 5},
+        {"rule": "L3", "function": "", "line": 6},
+        {"rule": "L4", "function": "", "line": 7}
+      ],
+      "absent_rules": ["D1", "D2", "D3", "D4", "D5"]
+    },
+    {
+      "file": "cases/lua_safe.lua",
+      "language": "lua",
+      "expect": [],
+      "absent_rules": ["L1", "L2", "L3", "L4"]
+    }
+  ]
+}

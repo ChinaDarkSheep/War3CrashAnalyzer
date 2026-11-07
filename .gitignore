@@ -17,6 +17,8 @@ extracted_*/
 
 # 泄露语料真实地图基线（仅本地）
 tests/leak_corpus/.real_baseline/
+# 掉线风险真实地图基线（仅本地）
+tests/desync_corpus/.real_baseline/
 
 # 工具/编辑器
 .workbuddy-ai/
